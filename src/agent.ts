@@ -8,6 +8,7 @@ import {
   EMOTION_BY_KEY,
   describeValue,
   genericScaleText,
+  clampSeed,
   EmotionDef,
 } from './affect'
 
@@ -83,9 +84,21 @@ function seedSystemPrompt(): string {
     '}',
     '',
     'baselines = resting temperament this character relaxes toward. opening_state =',
-    'how they feel as the scene opens (may differ from baseline). Only include the',
-    'emotions that matter for this character; the rest default to quiet. Unipolar',
-    'emotions take 0..1, valence and mood take -1..1.',
+    'how they feel as the scene opens (may differ from baseline). Unipolar emotions',
+    'take 0..1, valence and mood take -1..1.',
+    '',
+    'CALIBRATION — this matters. High values are RARE and are meant to be earned',
+    'through play, not handed out at the start:',
+    '  • 0.5 already means a feeling clearly colors everything they do. 0.8+ means it',
+    '    is breaking their composure. 0.9+ is overwhelming. A character meeting someone',
+    '    for the first time is NOT overwhelmed.',
+    '  • Keep MOST feelings at or near 0. Choose only 2-4 that genuinely define this',
+    '    character and give them MODEST values (roughly 0.15-0.4). Do not light up half',
+    '    the list.',
+    '  • baselines should sit low (mostly 0.05-0.3); a defining trait might reach ~0.4.',
+    '    Resting temperament is not an extreme. valence/mood usually start within ±0.4.',
+    '  • opening_state should stay calm unless the scene literally opens mid-crisis.',
+    '(Values are clamped to a calibrated ceiling, so do not try to start anyone pegged.)',
     '',
     'Emotions you may set:',
     emotionGlossary(),
@@ -139,12 +152,14 @@ export async function seedRun(
   const setOne = (key: string, value: unknown, which: 'baseline' | 'value') => {
     const def = EMOTION_BY_KEY[key]
     if (!def || typeof value !== 'number' || !Number.isFinite(value)) return
-    const v = def.kind === 'bipolar' ? Math.max(-1, Math.min(1, value)) : Math.max(0, Math.min(1, value))
+    // Clamp into the calibrated seed range so a new run never opens pegged near
+    // the extreme — high values must be earned through play.
     if (which === 'baseline') {
+      const v = clampSeed(def, value, 'baseline')
       primary.emotions[key].baseline = v
       primary.emotions[key].value = v // start at the baseline unless opening_state overrides
     } else {
-      primary.emotions[key].value = v
+      primary.emotions[key].value = clampSeed(def, value, 'opening')
     }
   }
   for (const [k, v] of Object.entries(parsed.baselines ?? {})) setOne(k, v, 'baseline')
@@ -174,12 +189,22 @@ function updateSystemPrompt(directive: string): string {
     '(energy/psychological arousal) and mood (agreeableness). This is an adult engine —',
     'sexual_arousal is a normal, first-class feeling to track when the scene warrants.',
     '',
-    'SATURATION. Feelings resist their extremes. apply_stimulus pushes in a saturating',
-    'space, so the same intensity moves a calm mind far more than an overwhelmed one;',
-    'reaching 0.9+ takes sustained, strong, repeated pressure over turns. Move feelings',
-    'with apply_stimulus in proportion to what actually happened this turn — a glance is',
-    '+0.3, a confession +1.5, a betrayal +3 to the wronged feeling and negative to trust.',
-    'Reserve set_emotion for shocks/resets that genuinely snap a feeling to a value.',
+    'SATURATION — read this carefully. Feelings strongly resist their extremes.',
+    'apply_stimulus pushes in a saturating space, so the same intensity moves a calm',
+    'mind far more than an overwhelmed one, and the high end is genuinely hard to',
+    'reach. From rest, a single +1 only reaches ~0.22, +3 ~0.53, +5 ~0.71; crossing',
+    '0.9 needs ~+9 of ACCUMULATED pressure, i.e. the same strong beat hit again and',
+    'again over many turns. So:',
+    '  • Size intensity by the event: a passing pleasantry +0.5, a normal meaningful',
+    '    moment +1 to +2, a strong emotional beat +3 to +5, a genuine shock +6 to +8.',
+    '    Use negative intensity just as readily to relieve a feeling the moment eased.',
+    '  • A first, friendly meeting should leave someone mildly curious or warm (landing',
+    '    ~0.2-0.4), NOT amused/excited/tender all at 0.9. Most turns move only one to',
+    '    three feelings; do not light up the whole vector.',
+    '  • Values above ~0.7 should be uncommon and correspond to real, established,',
+    '    repeatedly-fed emotional investment — never a single nice exchange.',
+    'Reserve set_emotion for a true shock/reset that genuinely snaps a feeling to a',
+    'value (e.g. sudden terror); it bypasses saturation, so use it rarely.',
     '',
     'WHAT TO DO EACH TURN:',
     '  • Update the affect of every character PRESENT in the scene, based on what was',

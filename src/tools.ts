@@ -115,13 +115,13 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
   {
     name: 'apply_stimulus',
     description:
-      `Nudge ONE feeling up or down in response to what just happened — the primary way you move a mind. \`intensity\` is a signed push: roughly +0.5 a faint touch, +1 an ordinary jolt, +2 a strong blow, +3 life-altering; negative values relieve the feeling. Because feelings saturate, the same intensity moves a calm character far more than an already-overwhelmed one, so pushing a feeling toward its extreme gets exponentially harder — apply repeated/large stimulus across turns to approach 1.0. Valid emotions: ${EMOTION_LIST}.`,
+      `Nudge ONE feeling up or down in response to what just happened — the primary way you move a mind. \`intensity\` is the signed strength of the event: a passing pleasantry +0.5, a normal meaningful moment +1 to +2, a strong emotional beat +3 to +5, a genuine shock +6 to +8; negative values relieve the feeling. Feelings saturate HARD, so from rest +1 only reaches ~0.22, +3 ~0.53, +5 ~0.71, and crossing 0.9 needs ~+9 of pressure accumulated over many turns — high values must be earned, never granted by one nice exchange. Valid emotions: ${EMOTION_LIST}.`,
     parameters: {
       type: 'object',
       properties: {
         character_id: { type: 'string' },
         emotion: { type: 'string', description: 'One emotion key from the valid list.' },
-        intensity: { type: 'number', description: 'Signed push, typically -3..+3.' },
+        intensity: { type: 'number', description: 'Signed event strength, typically -8..+8 (most turns ±0.5..2).' },
         reason: { type: 'string', description: 'Brief why, for the log/panel.' },
       },
       required: ['character_id', 'emotion', 'intensity'],

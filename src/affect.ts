@@ -124,15 +124,43 @@ export function fromPressure(def: EmotionDef, p: number): number {
   return clampUni(1 - Math.exp(-p))
 }
 
+/*
+ * How much a unit of `intensity` actually moves the hidden pressure. Kept well
+ * below 1 so the extremes stay genuinely hard to reach: from rest, +1 lands
+ * ~0.22, +2 ~0.39, +3 ~0.53, +5 ~0.71, and you need ~+9 of accumulated
+ * intensity to cross 0.9. A pleasant first meeting (a +1 nudge) should leave a
+ * character mildly curious, not overwhelmed.
+ */
+export const STIMULUS_GAIN = 0.25
+
 /**
  * Apply a signed stimulus to a feeling and return the new value. `intensity`
- * is a push in pressure-space (roughly: +1 is a solid, ordinary jolt; +3 is a
- * life-altering blow). Because pressure saturates, the same intensity moves a
- * calm character far more than an already-overwhelmed one — the asymptotic
- * difficulty near the extremes is automatic and needs no special-casing.
+ * is the raw strength of what happened (roughly: +1 a normal jolt, +3 a strong
+ * blow, +6 a life-altering shock); it is scaled by STIMULUS_GAIN before being
+ * added in pressure-space. Because pressure saturates, the same intensity moves
+ * a calm character far more than an already-overwhelmed one — the asymptotic
+ * difficulty near the extremes is automatic, and large/sustained pressure over
+ * many turns is required to approach 1.0.
  */
 export function applyStimulus(def: EmotionDef, current: number, intensity: number): number {
-  return fromPressure(def, toPressure(def, current) + intensity)
+  return fromPressure(def, toPressure(def, current) + intensity * STIMULUS_GAIN)
+}
+
+/* Ceilings applied to seeded (raw-set) values so a brand-new run never opens
+ * pegged near the extreme. A resting temperament is, by definition, not an
+ * all-consuming state; the start of a scene is rarely a crisis. Genuine
+ * extremes have to be EARNED through play, via stimulus. */
+export const SEED_BASELINE_CEIL = 0.4
+export const SEED_OPENING_CEIL = 0.55
+
+/** Clamp a seeded value into the calibrated range for its axis + role. */
+export function clampSeed(def: EmotionDef, value: number, role: 'baseline' | 'opening'): number {
+  const ceil = role === 'baseline' ? SEED_BASELINE_CEIL : SEED_OPENING_CEIL
+  if (def.kind === 'bipolar') {
+    const m = Math.min(Math.abs(value), ceil)
+    return value < 0 ? -m : m
+  }
+  return Math.max(0, Math.min(ceil, value))
 }
 
 /**

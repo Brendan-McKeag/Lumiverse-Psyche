@@ -60,8 +60,19 @@ function fromPressure(def, p) {
     return clampBi(Math.tanh(p));
   return clampUni(1 - Math.exp(-p));
 }
+var STIMULUS_GAIN = 0.25;
 function applyStimulus(def, current, intensity) {
-  return fromPressure(def, toPressure(def, current) + intensity);
+  return fromPressure(def, toPressure(def, current) + intensity * STIMULUS_GAIN);
+}
+var SEED_BASELINE_CEIL = 0.4;
+var SEED_OPENING_CEIL = 0.55;
+function clampSeed(def, value, role) {
+  const ceil = role === "baseline" ? SEED_BASELINE_CEIL : SEED_OPENING_CEIL;
+  if (def.kind === "bipolar") {
+    const m = Math.min(Math.abs(value), ceil);
+    return value < 0 ? -m : m;
+  }
+  return Math.max(0, Math.min(ceil, value));
 }
 function relaxToward(def, current, baseline, rate) {
   const pc = toPressure(def, current);
@@ -358,13 +369,13 @@ var TOOL_SCHEMAS = [
   },
   {
     name: "apply_stimulus",
-    description: `Nudge ONE feeling up or down in response to what just happened \u2014 the primary way you move a mind. \`intensity\` is a signed push: roughly +0.5 a faint touch, +1 an ordinary jolt, +2 a strong blow, +3 life-altering; negative values relieve the feeling. Because feelings saturate, the same intensity moves a calm character far more than an already-overwhelmed one, so pushing a feeling toward its extreme gets exponentially harder \u2014 apply repeated/large stimulus across turns to approach 1.0. Valid emotions: ${EMOTION_LIST}.`,
+    description: `Nudge ONE feeling up or down in response to what just happened \u2014 the primary way you move a mind. \`intensity\` is the signed strength of the event: a passing pleasantry +0.5, a normal meaningful moment +1 to +2, a strong emotional beat +3 to +5, a genuine shock +6 to +8; negative values relieve the feeling. Feelings saturate HARD, so from rest +1 only reaches ~0.22, +3 ~0.53, +5 ~0.71, and crossing 0.9 needs ~+9 of pressure accumulated over many turns \u2014 high values must be earned, never granted by one nice exchange. Valid emotions: ${EMOTION_LIST}.`,
     parameters: {
       type: "object",
       properties: {
         character_id: { type: "string" },
         emotion: { type: "string", description: "One emotion key from the valid list." },
-        intensity: { type: "number", description: "Signed push, typically -3..+3." },
+        intensity: { type: "number", description: "Signed event strength, typically -8..+8 (most turns \xB10.5..2)." },
         reason: { type: "string", description: "Brief why, for the log/panel." }
       },
       required: ["character_id", "emotion", "intensity"],
@@ -653,9 +664,21 @@ function seedSystemPrompt() {
     "}",
     "",
     "baselines = resting temperament this character relaxes toward. opening_state =",
-    "how they feel as the scene opens (may differ from baseline). Only include the",
-    "emotions that matter for this character; the rest default to quiet. Unipolar",
-    "emotions take 0..1, valence and mood take -1..1.",
+    "how they feel as the scene opens (may differ from baseline). Unipolar emotions",
+    "take 0..1, valence and mood take -1..1.",
+    "",
+    "CALIBRATION \u2014 this matters. High values are RARE and are meant to be earned",
+    "through play, not handed out at the start:",
+    "  \u2022 0.5 already means a feeling clearly colors everything they do. 0.8+ means it",
+    "    is breaking their composure. 0.9+ is overwhelming. A character meeting someone",
+    "    for the first time is NOT overwhelmed.",
+    "  \u2022 Keep MOST feelings at or near 0. Choose only 2-4 that genuinely define this",
+    "    character and give them MODEST values (roughly 0.15-0.4). Do not light up half",
+    "    the list.",
+    "  \u2022 baselines should sit low (mostly 0.05-0.3); a defining trait might reach ~0.4.",
+    "    Resting temperament is not an extreme. valence/mood usually start within \xB10.4.",
+    "  \u2022 opening_state should stay calm unless the scene literally opens mid-crisis.",
+    "(Values are clamped to a calibrated ceiling, so do not try to start anyone pegged.)",
     "",
     "Emotions you may set:",
     emotionGlossary()
@@ -704,12 +727,12 @@ async function seedRun(run, primary, cardContext, opts) {
     const def = EMOTION_BY_KEY[key];
     if (!def || typeof value !== "number" || !Number.isFinite(value))
       return;
-    const v = def.kind === "bipolar" ? Math.max(-1, Math.min(1, value)) : Math.max(0, Math.min(1, value));
     if (which === "baseline") {
+      const v = clampSeed(def, value, "baseline");
       primary.emotions[key].baseline = v;
       primary.emotions[key].value = v;
     } else {
-      primary.emotions[key].value = v;
+      primary.emotions[key].value = clampSeed(def, value, "opening");
     }
   };
   for (const [k, v] of Object.entries(parsed.baselines ?? {}))
@@ -731,12 +754,22 @@ function updateSystemPrompt(directive) {
     "(energy/psychological arousal) and mood (agreeableness). This is an adult engine \u2014",
     "sexual_arousal is a normal, first-class feeling to track when the scene warrants.",
     "",
-    "SATURATION. Feelings resist their extremes. apply_stimulus pushes in a saturating",
-    "space, so the same intensity moves a calm mind far more than an overwhelmed one;",
-    "reaching 0.9+ takes sustained, strong, repeated pressure over turns. Move feelings",
-    "with apply_stimulus in proportion to what actually happened this turn \u2014 a glance is",
-    "+0.3, a confession +1.5, a betrayal +3 to the wronged feeling and negative to trust.",
-    "Reserve set_emotion for shocks/resets that genuinely snap a feeling to a value.",
+    "SATURATION \u2014 read this carefully. Feelings strongly resist their extremes.",
+    "apply_stimulus pushes in a saturating space, so the same intensity moves a calm",
+    "mind far more than an overwhelmed one, and the high end is genuinely hard to",
+    "reach. From rest, a single +1 only reaches ~0.22, +3 ~0.53, +5 ~0.71; crossing",
+    "0.9 needs ~+9 of ACCUMULATED pressure, i.e. the same strong beat hit again and",
+    "again over many turns. So:",
+    "  \u2022 Size intensity by the event: a passing pleasantry +0.5, a normal meaningful",
+    "    moment +1 to +2, a strong emotional beat +3 to +5, a genuine shock +6 to +8.",
+    "    Use negative intensity just as readily to relieve a feeling the moment eased.",
+    "  \u2022 A first, friendly meeting should leave someone mildly curious or warm (landing",
+    "    ~0.2-0.4), NOT amused/excited/tender all at 0.9. Most turns move only one to",
+    "    three feelings; do not light up the whole vector.",
+    "  \u2022 Values above ~0.7 should be uncommon and correspond to real, established,",
+    "    repeatedly-fed emotional investment \u2014 never a single nice exchange.",
+    "Reserve set_emotion for a true shock/reset that genuinely snaps a feeling to a",
+    "value (e.g. sudden terror); it bypasses saturation, so use it rarely.",
     "",
     "WHAT TO DO EACH TURN:",
     "  \u2022 Update the affect of every character PRESENT in the scene, based on what was",
