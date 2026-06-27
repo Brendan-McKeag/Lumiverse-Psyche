@@ -1,0 +1,19 @@
+{
+  "version": "1.0.0",
+  "name": "Psyche",
+  "identifier": "psyche",
+  "author": "Brendan-McKeag",
+  "github": "https://github.com/Brendan-McKeag/Lumiverse-Psyche",
+  "homepage": "https://github.com/Brendan-McKeag/Lumiverse-Psyche",
+  "description": "A roguelike emotional-roleplay engine. From an intentionally sparse character card, each new chat seeds a distinct hidden persona, so every run plays differently. Every non-player character is tracked with a live 40-dimension affect vector (38 emotions plus bipolar valence and mood) whose extremes are exponentially hard to reach, and a free-form character sheet the engine rewrites Claude Code-style after every turn. The current emotional state is injected into each reply so characters actually feel what has happened to them.",
+  "permissions": [
+    "generation",
+    "chats",
+    "chat_mutation",
+    "characters",
+    "world_books"
+  ],
+  "entry_backend": "dist/backend.js",
+  "entry_frontend": "dist/frontend.js",
+  "minimum_lumiverse_version": "0.1.0"
+}
