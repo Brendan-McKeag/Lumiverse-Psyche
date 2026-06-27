@@ -178,25 +178,47 @@ async function runAgentForChat(chatId: string, reply: string, userId?: string) {
 
     const fullChar = await spindle.characters.get(char.id, userId).catch(() => null)
     const cardContext = buildCardContext(fullChar)
-    const signal = AbortSignal.timeout(config.agentTimeoutMs)
 
+    // ── seed (once per run) ──────────────────────────────────────────
+    // Persist the rolled persona IMMEDIATELY, before the heavier update pass.
+    // Otherwise a slow/failed update would discard the seed and the run would
+    // reseed forever ("generated a seed, but no activity").
     let seededNote = ''
     if (!run.seeded) {
-      seededNote = await seedRun(run, primary, cardContext, { signal, userId })
+      try {
+        seededNote = await seedRun(run, primary, cardContext, {
+          signal: AbortSignal.timeout(config.agentTimeoutMs),
+          userId,
+        })
+      } catch (err) {
+        const m = err instanceof Error && err.name === 'AbortError' ? 'timed out' : String(err)
+        seededNote = `seed failed (${m}); using card as identity`
+        if (!primary.identity) primary.identity = cardContext.slice(0, 1200)
+      }
       run.seeded = true
+      await ensureInjectionEntry(char.id, char.name, userId)
+      await saveRun(run) // <- seed is now durable no matter what happens next
+      spindle.log.info(`[psyche] ${char.name}: seeded — ${seededNote}`)
     } else {
       applyDecay(run)
     }
 
+    // ── per-turn affect + sheet update ───────────────────────────────
     const transcript = await buildTranscript(chatId, reply)
-    const result = await runPsycheAgent(run, transcript, cardContext, {
-      maxRounds: config.maxRounds,
-      directive: config.directive,
-      signal,
-      userId,
-    })
+    let result = { rounds: 0, toolCalls: [] as { tool: string; result: string }[], finalNote: '' }
+    try {
+      result = await runPsycheAgent(run, transcript, cardContext, {
+        maxRounds: config.maxRounds,
+        directive: config.directive,
+        signal: AbortSignal.timeout(config.agentTimeoutMs),
+        userId,
+      })
+    } catch (err) {
+      const m = err instanceof Error && err.name === 'AbortError' ? 'timed out' : String(err)
+      result.finalNote = `update failed (${m})`
+      spindle.log.error(`[psyche] ${char.name}: update pass failed — ${m}`)
+    }
 
-    // Provision (idempotent) the injection entry so the next reply is driven by state.
     await ensureInjectionEntry(char.id, char.name, userId)
     await saveRun(run)
 

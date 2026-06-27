@@ -990,21 +990,40 @@ async function runAgentForChat(chatId, reply, userId) {
     const primary = ensurePrimary(run, char.id, char.name);
     const fullChar = await spindle.characters.get(char.id, userId).catch(() => null);
     const cardContext = buildCardContext(fullChar);
-    const signal = AbortSignal.timeout(config.agentTimeoutMs);
     let seededNote = "";
     if (!run.seeded) {
-      seededNote = await seedRun(run, primary, cardContext, { signal, userId });
+      try {
+        seededNote = await seedRun(run, primary, cardContext, {
+          signal: AbortSignal.timeout(config.agentTimeoutMs),
+          userId
+        });
+      } catch (err) {
+        const m = err instanceof Error && err.name === "AbortError" ? "timed out" : String(err);
+        seededNote = `seed failed (${m}); using card as identity`;
+        if (!primary.identity)
+          primary.identity = cardContext.slice(0, 1200);
+      }
       run.seeded = true;
+      await ensureInjectionEntry(char.id, char.name, userId);
+      await saveRun(run);
+      spindle.log.info(`[psyche] ${char.name}: seeded \u2014 ${seededNote}`);
     } else {
       applyDecay(run);
     }
     const transcript = await buildTranscript(chatId, reply);
-    const result = await runPsycheAgent(run, transcript, cardContext, {
-      maxRounds: config.maxRounds,
-      directive: config.directive,
-      signal,
-      userId
-    });
+    let result = { rounds: 0, toolCalls: [], finalNote: "" };
+    try {
+      result = await runPsycheAgent(run, transcript, cardContext, {
+        maxRounds: config.maxRounds,
+        directive: config.directive,
+        signal: AbortSignal.timeout(config.agentTimeoutMs),
+        userId
+      });
+    } catch (err) {
+      const m = err instanceof Error && err.name === "AbortError" ? "timed out" : String(err);
+      result.finalNote = `update failed (${m})`;
+      spindle.log.error(`[psyche] ${char.name}: update pass failed \u2014 ${m}`);
+    }
     await ensureInjectionEntry(char.id, char.name, userId);
     await saveRun(run);
     spindle.sendToFrontend({
