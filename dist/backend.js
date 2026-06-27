@@ -1064,7 +1064,7 @@ spindle.on("GENERATION_STOPPED", async (payload, userId) => {
   dropObserver(payload.chatId);
   await runAgentForChat(payload.chatId, reply, userId);
 });
-spindle.registerWorldInfoInterceptor(async (ctx) => {
+async function injectionInterceptor(ctx) {
   if (!config.enabled || !ctx.chatId)
     return;
   const entry = ctx.entries.find((e) => isInjectionEntry(e.extensions));
@@ -1080,12 +1080,30 @@ spindle.registerWorldInfoInterceptor(async (ctx) => {
   if (!directive)
     return;
   return { forced: [entry.id], mutated: [{ id: entry.id, content: directive }] };
-}, 50);
+}
+var wiRegistered = false;
+function registerInjectionInterceptor() {
+  if (wiRegistered)
+    return;
+  if (!spindle.permissions.has("generation"))
+    return;
+  try {
+    spindle.registerWorldInfoInterceptor(injectionInterceptor, 50);
+    wiRegistered = true;
+    spindle.log.info("[psyche] injection interceptor registered");
+  } catch (err) {
+    spindle.log.warn(`[psyche] interceptor registration deferred: ${String(err)}`);
+  }
+}
 async function activeChatId(payloadChatId, userId) {
   if (payloadChatId)
     return payloadChatId;
-  const active = await spindle.chats.getActive(userId);
-  return active?.id ?? null;
+  try {
+    const active = await spindle.chats.getActive(userId);
+    return active?.id ?? null;
+  } catch {
+    return null;
+  }
 }
 function snapshotRun(run) {
   const characters = Object.values(run.characters).map((c) => ({
@@ -1134,113 +1152,118 @@ async function sendState(chatId, userId, note) {
   spindle.sendToFrontend({ type: "state", characterName: char?.name ?? null, snapshot: snapshotRun(run), note }, userId);
 }
 spindle.onFrontendMessage(async (payload, userId) => {
-  switch (payload?.type) {
-    case "get_config":
-      spindle.sendToFrontend({ type: "config", config }, userId);
-      break;
-    case "set_config":
-      config = {
-        enabled: Boolean(payload.config?.enabled ?? config.enabled),
-        maxRounds: clampInt(payload.config?.maxRounds ?? config.maxRounds, 1, 20),
-        decayRate: clampFloat(payload.config?.decayRate ?? config.decayRate, 0, 1),
-        directive: String(payload.config?.directive ?? config.directive),
-        agentTimeoutMs: clampInt(payload.config?.agentTimeoutMs ?? config.agentTimeoutMs, 1e4, 300000)
-      };
-      await saveConfig();
-      spindle.sendToFrontend({ type: "config", config }, userId);
-      break;
-    case "get_state": {
-      const chatId = await activeChatId(payload.chatId, userId);
-      await sendState(chatId, userId);
-      break;
-    }
-    case "reseed": {
-      const chatId = await activeChatId(payload.chatId, userId);
-      if (!chatId)
+  try {
+    switch (payload?.type) {
+      case "get_config":
+        spindle.sendToFrontend({ type: "config", config }, userId);
         break;
-      const char = await characterForChat(chatId, userId);
-      if (!char)
+      case "set_config":
+        config = {
+          enabled: Boolean(payload.config?.enabled ?? config.enabled),
+          maxRounds: clampInt(payload.config?.maxRounds ?? config.maxRounds, 1, 20),
+          decayRate: clampFloat(payload.config?.decayRate ?? config.decayRate, 0, 1),
+          directive: String(payload.config?.directive ?? config.directive),
+          agentTimeoutMs: clampInt(payload.config?.agentTimeoutMs ?? config.agentTimeoutMs, 1e4, 300000)
+        };
+        await saveConfig();
+        spindle.sendToFrontend({ type: "config", config }, userId);
         break;
-      const run = await loadRun(chatId);
-      run.seed = Math.floor(Math.random() * 1e9);
-      const primary = ensurePrimary(run, char.id, char.name);
-      primary.emotions = newCharacter(primary.id, primary.name, true).emotions;
-      primary.sheet = {};
-      const fullChar = await spindle.characters.get(char.id, userId).catch(() => null);
-      const note = await seedRun(run, primary, buildCardContext(fullChar), { userId });
-      run.seeded = true;
-      await ensureInjectionEntry(char.id, char.name, userId);
-      await saveRun(run);
-      await sendState(chatId, userId, `Rerolled \u2014 ${note}`);
-      break;
-    }
-    case "reset_run": {
-      const chatId = await activeChatId(payload.chatId, userId);
-      if (!chatId)
+      case "get_state": {
+        const chatId = await activeChatId(payload.chatId, userId);
+        await sendState(chatId, userId);
         break;
-      await saveRun(emptyRun(chatId));
-      await sendState(chatId, userId, "Run state cleared.");
-      break;
-    }
-    case "set_present": {
-      const chatId = await activeChatId(payload.chatId, userId);
-      if (!chatId)
-        break;
-      const run = await loadRun(chatId);
-      const c = findChar(run, payload.characterId);
-      if (c) {
-        c.present = Boolean(payload.present);
-        await saveRun(run);
       }
-      await sendState(chatId, userId);
-      break;
-    }
-    case "set_emotion": {
-      const chatId = await activeChatId(payload.chatId, userId);
-      if (!chatId)
-        break;
-      const run = await loadRun(chatId);
-      const c = findChar(run, payload.characterId);
-      const key = String(payload.emotion ?? "");
-      if (c && EMOTION_BY_KEY[key] && typeof payload.value === "number") {
-        backfillEmotions(c);
-        c.emotions[key].value = clampForKind2(key, payload.value);
+      case "reseed": {
+        const chatId = await activeChatId(payload.chatId, userId);
+        if (!chatId)
+          break;
+        const char = await characterForChat(chatId, userId);
+        if (!char)
+          break;
+        const run = await loadRun(chatId);
+        run.seed = Math.floor(Math.random() * 1e9);
+        const primary = ensurePrimary(run, char.id, char.name);
+        primary.emotions = newCharacter(primary.id, primary.name, true).emotions;
+        primary.sheet = {};
+        const fullChar = await spindle.characters.get(char.id, userId).catch(() => null);
+        const note = await seedRun(run, primary, buildCardContext(fullChar), { userId });
+        run.seeded = true;
+        await ensureInjectionEntry(char.id, char.name, userId);
         await saveRun(run);
-      }
-      await sendState(chatId, userId);
-      break;
-    }
-    case "save_persona": {
-      const chatId = await activeChatId(payload.chatId, userId);
-      if (!chatId)
+        await sendState(chatId, userId, `Rerolled \u2014 ${note}`);
         break;
-      const run = await loadRun(chatId);
-      const c = findChar(run, payload.characterId);
-      if (c && typeof payload.persona === "string") {
-        c.persona = payload.persona;
-        await saveRun(run);
       }
-      await sendState(chatId, userId);
-      break;
-    }
-    case "save_sheet": {
-      const chatId = await activeChatId(payload.chatId, userId);
-      if (!chatId)
+      case "reset_run": {
+        const chatId = await activeChatId(payload.chatId, userId);
+        if (!chatId)
+          break;
+        await saveRun(emptyRun(chatId));
+        await sendState(chatId, userId, "Run state cleared.");
         break;
-      const run = await loadRun(chatId);
-      const c = findChar(run, payload.characterId);
-      const section = slugify(String(payload.section ?? ""));
-      if (c && section) {
-        const content = String(payload.content ?? "");
-        if (content.trim())
-          c.sheet[section] = content;
-        else
-          delete c.sheet[section];
-        await saveRun(run);
       }
-      await sendState(chatId, userId);
-      break;
+      case "set_present": {
+        const chatId = await activeChatId(payload.chatId, userId);
+        if (!chatId)
+          break;
+        const run = await loadRun(chatId);
+        const c = findChar(run, payload.characterId);
+        if (c) {
+          c.present = Boolean(payload.present);
+          await saveRun(run);
+        }
+        await sendState(chatId, userId);
+        break;
+      }
+      case "set_emotion": {
+        const chatId = await activeChatId(payload.chatId, userId);
+        if (!chatId)
+          break;
+        const run = await loadRun(chatId);
+        const c = findChar(run, payload.characterId);
+        const key = String(payload.emotion ?? "");
+        if (c && EMOTION_BY_KEY[key] && typeof payload.value === "number") {
+          backfillEmotions(c);
+          c.emotions[key].value = clampForKind2(key, payload.value);
+          await saveRun(run);
+        }
+        await sendState(chatId, userId);
+        break;
+      }
+      case "save_persona": {
+        const chatId = await activeChatId(payload.chatId, userId);
+        if (!chatId)
+          break;
+        const run = await loadRun(chatId);
+        const c = findChar(run, payload.characterId);
+        if (c && typeof payload.persona === "string") {
+          c.persona = payload.persona;
+          await saveRun(run);
+        }
+        await sendState(chatId, userId);
+        break;
+      }
+      case "save_sheet": {
+        const chatId = await activeChatId(payload.chatId, userId);
+        if (!chatId)
+          break;
+        const run = await loadRun(chatId);
+        const c = findChar(run, payload.characterId);
+        const section = slugify(String(payload.section ?? ""));
+        if (c && section) {
+          const content = String(payload.content ?? "");
+          if (content.trim())
+            c.sheet[section] = content;
+          else
+            delete c.sheet[section];
+          await saveRun(run);
+        }
+        await sendState(chatId, userId);
+        break;
+      }
     }
+  } catch (err) {
+    spindle.log.error(`[psyche] frontend handler error: ${String(err)}`);
+    spindle.sendToFrontend({ type: "state", snapshot: null, note: `Action failed \u2014 check Psyche's permissions are granted. (${String(err)})` }, userId);
   }
 });
 function clampInt(v, min, max) {
@@ -1255,7 +1278,14 @@ function clampFloat(v, min, max) {
     return min;
   return Math.max(min, Math.min(max, n));
 }
+try {
+  spindle.permissions.onChanged(() => registerInjectionInterceptor());
+} catch {}
 (async () => {
   await loadConfig();
+  try {
+    await spindle.permissions.getGranted();
+  } catch {}
+  registerInjectionInterceptor();
   spindle.log.info("[psyche] loaded");
 })();

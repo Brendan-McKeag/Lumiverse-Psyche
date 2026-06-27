@@ -267,8 +267,12 @@ spindle.on('GENERATION_STOPPED', async (payload, userId) => {
  * its content with the live emotional directive for THIS chat's run. When the
  * extension is off this never runs, the entry stays disabled, and the prompt is
  * completely normal.
+ *
+ * Registration requires the `generation` permission. On a fresh install that
+ * grant may not exist yet, so we register only once it is present and (re)try
+ * when permissions change — never at module load, where a denial would be lost.
  * ------------------------------------------------------------------ */
-spindle.registerWorldInfoInterceptor(async (ctx) => {
+async function injectionInterceptor(ctx: import('lumiverse-spindle-types').WorldInfoInterceptorCtxDTO) {
   if (!config.enabled || !ctx.chatId) return
   const entry = ctx.entries.find((e) => isInjectionEntry(e.extensions))
   if (!entry) return // not provisioned yet for this character
@@ -283,14 +287,32 @@ spindle.registerWorldInfoInterceptor(async (ctx) => {
   if (!directive) return // nothing seeded/present -> leave the entry disabled
 
   return { forced: [entry.id], mutated: [{ id: entry.id, content: directive }] }
-}, 50)
+}
+
+let wiRegistered = false
+function registerInjectionInterceptor() {
+  if (wiRegistered) return
+  if (!spindle.permissions.has('generation')) return // wait for the grant
+  try {
+    spindle.registerWorldInfoInterceptor(injectionInterceptor, 50)
+    wiRegistered = true
+    spindle.log.info('[psyche] injection interceptor registered')
+  } catch (err) {
+    spindle.log.warn(`[psyche] interceptor registration deferred: ${String(err)}`)
+  }
+}
 
 /* --------------------------- frontend bridge ----------------------- */
 
 async function activeChatId(payloadChatId?: string, userId?: string): Promise<string | null> {
   if (payloadChatId) return payloadChatId
-  const active = await spindle.chats.getActive(userId)
-  return active?.id ?? null
+  try {
+    const active = await spindle.chats.getActive(userId)
+    return active?.id ?? null
+  } catch {
+    // `chats` permission may not be granted yet — never let this crash the worker.
+    return null
+  }
 }
 
 function snapshotRun(run: RunState) {
@@ -346,6 +368,7 @@ async function sendState(chatId: string | null, userId?: string, note?: string) 
 }
 
 spindle.onFrontendMessage(async (payload: any, userId) => {
+ try {
   switch (payload?.type) {
     case 'get_config':
       spindle.sendToFrontend({ type: 'config', config }, userId)
@@ -455,6 +478,15 @@ spindle.onFrontendMessage(async (payload: any, userId) => {
       break
     }
   }
+ } catch (err) {
+  // A missing permission (chats/characters/world_books) must never crash the
+  // worker — surface it to the panel instead.
+  spindle.log.error(`[psyche] frontend handler error: ${String(err)}`)
+  spindle.sendToFrontend(
+    { type: 'state', snapshot: null, note: `Action failed — check Psyche's permissions are granted. (${String(err)})` },
+    userId,
+  )
+ }
 })
 
 function clampInt(v: unknown, min: number, max: number): number {
@@ -469,7 +501,21 @@ function clampFloat(v: unknown, min: number, max: number): number {
 }
 
 /* ------------------------------- boot ------------------------------ */
+// The world-info interceptor needs `generation`. Register it as soon as that
+// permission is present — now if already granted, otherwise when it flips on.
+try {
+  spindle.permissions.onChanged(() => registerInjectionInterceptor())
+} catch {
+  /* permissions API unavailable — ignore */
+}
+
 ;(async () => {
   await loadConfig()
+  try {
+    await spindle.permissions.getGranted() // warms the local permission cache
+  } catch {
+    /* ignore */
+  }
+  registerInjectionInterceptor()
   spindle.log.info('[psyche] loaded')
 })()
