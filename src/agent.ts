@@ -42,6 +42,8 @@ function emotionGlossary(): string {
 interface SeedResult {
   identity?: string
   persona?: string
+  canon?: string
+  goals?: string[]
   baselines?: Record<string, number>
   opening_state?: Record<string, number>
 }
@@ -74,11 +76,21 @@ function seedSystemPrompt(): string {
     'Stay faithful to every basic fact the card DOES state (species, sex, age,',
     'appearance, name). Never contradict or "correct" them.',
     '',
+    'Commit to a real, specific person — invent concrete details (background, tastes,',
+    'skills, quirks, relationships, body specifics) to fill the blanks the card leaves.',
+    'Give them their OWN goals and desires so they are a player in the scene, not a',
+    'mirror for whoever they meet.',
+    '',
     'Return ONLY JSON of this shape:',
     '{',
     '  "identity": "physical facts + grounded summary, faithful to the card",',
     '  "persona": "the hidden driver: personality, interests, wants, fears, voice, how',
     '              they treat people — 2-5 sentences that will steer how they act",',
+    '  "canon": "established STATIC facts you are inventing to make them specific:',
+    '            history, upbringing, tastes, skills, relationships, quirks, speech.',
+    '            Concrete bullet-like sentences. This becomes fixed truth for the run.",',
+    '  "goals": ["1-5 concrete things THEY want — out of life, the scene, whoever they',
+    '            meet — in their own self-interest, most pressing first"],',
     '  "baselines": { "<emotion>": <resting value>, ... },',
     '  "opening_state": { "<emotion>": <current value at scene start>, ... }',
     '}',
@@ -148,6 +160,10 @@ export async function seedRun(
   if (typeof parsed.identity === 'string' && parsed.identity.trim()) primary.identity = parsed.identity.trim()
   else primary.identity = cardContext.slice(0, 1200)
   if (typeof parsed.persona === 'string') primary.persona = parsed.persona.trim()
+  if (typeof parsed.canon === 'string' && parsed.canon.trim()) primary.canon = parsed.canon.trim()
+  if (Array.isArray(parsed.goals)) {
+    primary.goals = parsed.goals.filter((g) => typeof g === 'string').map((g) => g.trim()).filter(Boolean)
+  }
 
   const setOne = (key: string, value: unknown, which: 'baseline' | 'value') => {
     const def = EMOTION_BY_KEY[key]
@@ -166,7 +182,9 @@ export async function seedRun(
   for (const [k, v] of Object.entries(parsed.opening_state ?? {})) setOne(k, v, 'value')
 
   primary.updatedAt = Date.now()
-  return `seed ${run.seed}: rolled persona + starting temperament.`
+  return `seed ${run.seed}: rolled persona, canon (${(primary.canon ?? '').length} chars), ${
+    (primary.goals ?? []).length
+  } goals + starting temperament.`
 }
 
 /* ----------------------- post-turn update -------------------------- */
@@ -210,21 +228,32 @@ function updateSystemPrompt(directive: string): string {
     '  • Update the affect of every character PRESENT in the scene, based on what was',
     '    said and done to and by them. Relieve feelings that the moment soothed',
     '    (negative intensity) as readily as you raise ones it provoked.',
-    '  • Rewrite their sheet sections as facts change — goals, attitude toward the',
-    '    player, relationships, secrets, body state. You have full authority to add,',
-    '    edit, and delete sections (update_sheet / remove_sheet_section).',
+    '  • Grow the CANON (update_canon): the card is intentionally thin — it is YOUR job',
+    '    to make this character a fully realized, specific person. Each turn, when the',
+    '    scene touches an undefined area, invent and record concrete static facts',
+    '    (history, tastes, skills, relationships, body, speech habits). Keep doing this',
+    '    until the character is richly defined, then mostly hold.',
+    '  • Keep GOALS current (set_goals): what this character is pursuing, in their own',
+    '    interest. They should always have an agenda that the next reply can act on.',
+    '  • Rewrite dynamic sheet sections as state changes — toward_player, attitude,',
+    '    state, plans (update_sheet / remove_sheet_section). Static lore goes in canon,',
+    '    not the sheet.',
     '  • Introduce supporting characters the story brings in (create_character) and set',
-    '    who is present (set_present). Advance their persona as they reveal themselves.',
+    '    who is present (set_present). Give them canon + goals too.',
     '  • Occasionally nudge a baseline (set_baseline) when a lasting change of',
     '    temperament is earned — not every turn.',
     '',
-    'FIDELITY. Never invent basic facts (species, sex, age, name, appearance). Keep the',
-    'card as the source of truth for the primary character. If something is not',
-    'established, leave it out rather than guess. Read a character before you rewrite it.',
+    'CANON IS LAW. Once a fact is in a character\'s canon it is FIXED truth: never',
+    'contradict or quietly retcon it — only extend it, or rarely refine wording without',
+    'changing meaning. Read a character before rewriting it. You may freely INVENT to',
+    'fill blanks, but you may NOT contradict (a) what the card explicitly states about',
+    'the primary character (species, sex, age, name, appearance) or (b) anything already',
+    'in canon or established in the story. A wrong "fact" that breaks continuity is the',
+    'worst failure; an unfilled blank is just a future opportunity.',
     '',
     'ECONOMY. You see the whole story each run, but do not redo the whole mind every',
-    'turn. Make the changes THIS turn warrants, then stop. When done, reply with a',
-    'one-line summary and no tool calls.',
+    'turn. Make the changes THIS turn warrants (affect + a little canon/goal growth),',
+    'then stop. When done, reply with a one-line summary and no tool calls.',
     directive.trim() ? `\nOPERATOR DIRECTIVE:\n${directive.trim()}` : '',
   ].join('\n')
 }
@@ -354,26 +383,29 @@ export async function runPsycheAgent(
 function demeanorSystemPrompt(): string {
   return [
     AGENT_SENTINEL,
-    'You are Psyche\'s behavior synthesizer. Given a character\'s persona and their',
-    'current inner state (energy, agreeableness, what pulls them toward vs. away,',
-    'their power stance, and any inner tensions), write a tight DEMEANOR BRIEF: how',
-    'they are carrying themselves and behaving RIGHT NOW.',
+    'You are Psyche\'s behavior synthesizer. For each character you are given their',
+    'persona, goals/desires, current inner state (energy, agreeableness, what pulls',
+    'them toward vs. away, power stance, inner tensions) and the recent scene. Produce',
+    'two things per character:',
     '',
-    'Rules:',
-    '  • 2-4 sentences, present tense, third person using their name.',
-    '  • Describe BEHAVIOR — posture, eye contact, tone, pacing, what they pursue,',
-    '    what they suppress — not a list of emotions. Weave the combination together:',
-    '    show how the strongest feeling is colored, fought, or amplified by the rest.',
-    '  • When there is a tension, make it visible as contradiction or push-and-pull.',
-    '  • Never name an emotion or a number; never describe plot events; do not write',
-    '    dialogue. Just the read of their manner.',
+    '  demeanor — a tight 2-4 sentence, present-tense read of how they are carrying',
+    '    themselves and behaving RIGHT NOW. BEHAVIOR (posture, eye contact, tone,',
+    '    pacing, what they pursue/suppress), not a list of emotions. Weave the',
+    '    combination: show how the strongest feeling is colored, fought, or amplified',
+    '    by the rest; make any tension visible as contradiction or push-and-pull.',
     '',
-    'Return ONLY JSON mapping each character id to its brief:',
-    '{ "<id>": "<brief>", ... }',
+    '  intent — 1-2 sentences: what this character WANTS this moment (tied to their',
+    '    goals) and the concrete move they are likely to make to get it — initiating,',
+    '    steering, testing, pushing back, withholding. This is what makes them drive',
+    '    the scene rather than just react. It must be THEIR agenda, not the player\'s.',
+    '',
+    'Never name an emotion or a number; never narrate plot that has not happened; do',
+    'not write dialogue. Return ONLY JSON mapping each character id to an object:',
+    '{ "<id>": { "demeanor": "<...>", "intent": "<...>" }, ... }',
   ].join('\n')
 }
 
-/** Synthesize + store a demeanor brief for every present character. */
+/** Synthesize + store demeanor + intent for every present character. */
 export async function synthesizeDemeanor(
   run: RunState,
   recentScene: string,
@@ -384,7 +416,12 @@ export async function synthesizeDemeanor(
 
   const blocks = present
     .map((c) =>
-      [`### ${c.id} — ${c.name}`, c.persona ? `persona: ${c.persona}` : '', groundedReadout(c)]
+      [
+        `### ${c.id} — ${c.name}`,
+        c.persona ? `persona: ${c.persona}` : '',
+        (c.goals ?? []).length ? `goals: ${(c.goals ?? []).join('; ')}` : '',
+        groundedReadout(c),
+      ]
         .filter(Boolean)
         .join('\n'),
     )
@@ -396,10 +433,10 @@ export async function synthesizeDemeanor(
       role: 'user',
       content: [
         recentScene.trim() ? ['Recent scene (most recent last):', '"""', recentScene.trim(), '"""', ''].join('\n') : '',
-        'Characters and their current inner state:',
+        'Characters (persona, goals, current inner state):',
         blocks,
         '',
-        'Write each one\'s demeanor brief now. Return only the JSON.',
+        'Write each one\'s demeanor + intent now. Return only the JSON.',
       ]
         .filter(Boolean)
         .join('\n'),
@@ -418,8 +455,16 @@ export async function synthesizeDemeanor(
   const parsed = extractJson(res.content ?? '') as Record<string, unknown> | null
   if (!parsed) return
   for (const c of present) {
-    const b = parsed[c.id]
-    if (typeof b === 'string' && b.trim()) c.demeanor = b.trim()
+    const entry = parsed[c.id]
+    if (!entry) continue
+    // Tolerate either { demeanor, intent } objects or a bare demeanor string.
+    if (typeof entry === 'string') {
+      if (entry.trim()) c.demeanor = entry.trim()
+      continue
+    }
+    const o = entry as { demeanor?: unknown; intent?: unknown }
+    if (typeof o.demeanor === 'string' && o.demeanor.trim()) c.demeanor = o.demeanor.trim()
+    if (typeof o.intent === 'string' && o.intent.trim()) c.intent = o.intent.trim()
   }
 }
 

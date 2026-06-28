@@ -40,12 +40,28 @@ export interface CharacterState {
   /** free-form, fully engine-controlled sheet sections (name -> markdown) */
   sheet: Record<string, string>
   /**
+   * The character BIBLE: freeform, engine-authored STATIC canon. The light card
+   * leaves blanks on purpose; the engine fills them with concrete invented facts
+   * (history, tastes, skills, body specifics, relationships, quirks) and then
+   * treats them as FIXED — never contradicting, only extending/refining. This is
+   * what makes the character consistent and their own person across the run.
+   */
+  canon?: string
+  /**
+   * The character's own durable goals / desires / agenda — what THEY are trying
+   * to get out of the scene and the relationship. Drives proactive behavior so
+   * the roleplay is two-sided, not a compliant improv partner.
+   */
+  goals?: string[]
+  /**
    * Present-tense "demeanor brief": an LLM-woven 2-4 sentence read of how this
    * character is ACTING right now, synthesized from the whole affect vector
    * (including conflicts). Refreshed each turn; the grounded readout below it is
    * always recomputed live so manual value edits still bite immediately.
    */
   demeanor?: string
+  /** Dynamic: what they want right now and the move they are likely to make. */
+  intent?: string
   updatedAt: number
 }
 
@@ -88,6 +104,8 @@ export function newCharacter(id: string, name: string, isPrimary: boolean): Char
     present: isPrimary,
     emotions: neutralVector(),
     sheet: {},
+    canon: '',
+    goals: [],
     updatedAt: Date.now(),
   }
 }
@@ -181,22 +199,35 @@ export function groundedReadout(c: CharacterState): string {
   return lines.join('\n')
 }
 
+const CANON_INJECT_CAP = 2200 // keep the bible from ballooning the prompt
+const indent = (s: string, pad = '    ') => s.split('\n').map((l) => pad + l).join('\n')
+
 function characterBlock(c: CharacterState): string {
   const lines: string[] = []
   lines.push(`## ${c.name}${c.isPrimary ? '' : ' (supporting character)'}`)
 
-  if (c.demeanor && c.demeanor.trim()) {
-    lines.push(c.demeanor.trim())
-    lines.push('')
-    lines.push('Underneath (embody this — do not narrate or name it):')
-  }
+  if (c.demeanor && c.demeanor.trim()) lines.push(c.demeanor.trim())
+  if (c.intent && c.intent.trim()) lines.push(`Wants right now / likely to: ${c.intent.trim()}`)
+
+  lines.push('')
+  lines.push('Underneath (embody — do not narrate or name any of this):')
   lines.push(groundedReadout(c))
 
-  if (c.persona.trim()) lines.push(`  who they are: ${c.persona.trim()}`)
-  // Surface a couple of the most behaviorally-relevant sheet sections if present.
-  for (const key of ['goal', 'goals', 'agenda', 'toward_player', 'attitude', 'state']) {
+  const goals = (c.goals ?? []).map((g) => g.trim()).filter(Boolean)
+  if (goals.length) lines.push(`  goals & desires they are pursuing: ${goals.join('; ')}`)
+  if (c.persona.trim()) lines.push(`  core personality & drives: ${c.persona.trim()}`)
+
+  // Operational state sections (dynamic).
+  for (const key of ['toward_player', 'attitude', 'state']) {
     const s = c.sheet[key]
     if (s && s.trim()) lines.push(`  ${key.replace(/_/g, ' ')}: ${s.trim()}`)
+  }
+
+  // The locked bible last — fixed facts the writer must honor.
+  const canon = (c.canon ?? '').trim()
+  if (canon) {
+    lines.push('  established canon (FIXED — honor exactly, never contradict):')
+    lines.push(indent(canon.slice(0, CANON_INJECT_CAP)))
   }
   return lines.join('\n')
 }
@@ -213,12 +244,17 @@ export function buildDirective(run: RunState): string | null {
 
   const blocks = present.map(characterBlock).join('\n\n')
   return [
-    '[Psyche — how they are right now]',
-    'Portray each character below by ACTING their state — posture, tone, word',
-    'choice, what they reach for and what they hold back. Let stronger feelings',
-    'show more and break composure; where two pulls conflict, let it show as',
-    'hesitation, contradiction, push-and-pull. Embody it in the prose; never',
-    'recite or name these feelings, and never mention these notes.',
+    '[Psyche — character, agency & state]',
+    'Each character below is an INDEPENDENT person with their own goals — not a',
+    'compliant narrator, not a yes-man. Play them pursuing what THEY want: let them',
+    'take initiative, start things, change the subject, make demands, set conditions,',
+    'and push back, stall, or refuse when the player\'s lead cuts against their aims.',
+    'They move the scene as much as the player does, toward their own desires.',
+    '',
+    'Act their state through behavior — posture, tone, word choice, what they reach',
+    'for and hold back; let stronger feelings break composure and conflicting pulls',
+    'show as push-and-pull. Treat their established canon as fixed truth. Never',
+    'recite, name, or mention any of these notes — just live them.',
     '',
     blocks,
   ].join('\n')

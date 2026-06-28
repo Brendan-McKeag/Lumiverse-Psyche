@@ -369,6 +369,9 @@ function snapshotRun(run: RunState) {
     identity: c.identity,
     persona: c.persona,
     demeanor: c.demeanor ?? '',
+    intent: c.intent ?? '',
+    canon: c.canon ?? '',
+    goals: c.goals ?? [],
     sheet: c.sheet,
     emotions: EMOTIONS.map((def) => {
       const e = c.emotions[def.key] ?? { value: 0, baseline: 0 }
@@ -504,6 +507,36 @@ spindle.onFrontendMessage(async (payload: any, userId) => {
       const c = findChar(run, payload.characterId)
       if (c && typeof payload.persona === 'string') {
         c.persona = payload.persona
+        await saveRun(run)
+      }
+      await sendState(chatId, userId)
+      break
+    }
+
+    case 'save_canon': {
+      const chatId = await activeChatId(payload.chatId, userId)
+      if (!chatId) break
+      const run = await loadRun(chatId)
+      const c = findChar(run, payload.characterId)
+      if (c && typeof payload.canon === 'string') {
+        c.canon = payload.canon
+        await saveRun(run)
+      }
+      await sendState(chatId, userId)
+      break
+    }
+
+    case 'save_goals': {
+      const chatId = await activeChatId(payload.chatId, userId)
+      if (!chatId) break
+      const run = await loadRun(chatId)
+      const c = findChar(run, payload.characterId)
+      if (c && typeof payload.goals === 'string') {
+        // newline-separated in the panel -> string[]
+        c.goals = String(payload.goals)
+          .split('\n')
+          .map((g) => g.trim())
+          .filter(Boolean)
         await saveRun(run)
       }
       await sendState(chatId, userId)

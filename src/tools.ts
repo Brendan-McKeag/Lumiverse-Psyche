@@ -160,9 +160,38 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
     },
   },
   {
+    name: 'update_canon',
+    description:
+      'Add to (or rewrite) the character BIBLE — the freeform store of established STATIC facts the light card deliberately leaves blank: history, upbringing, tastes, skills, body specifics, relationships, beliefs, quirks, speech habits. PROACTIVELY INVENT concrete, specific facts to make this character fully their own person; a vague character is a failure. Once you write a fact here, treat it as FIXED canon and never contradict it later — only extend it. mode "append" (default) adds newly-established facts; "replace" reorganizes/condenses the whole bible without discarding established truth.',
+    parameters: {
+      type: 'object',
+      properties: {
+        character_id: { type: 'string' },
+        content: { type: 'string', description: 'Concrete, specific fact(s) to record (markdown).' },
+        mode: { type: 'string', enum: ['append', 'replace'], description: 'append (default) or replace the whole bible.' },
+      },
+      required: ['character_id', 'content'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'set_goals',
+    description:
+      "Set the character's durable goals / desires / agenda — what THEY want out of this scene, the player, and their own life, in their own self-interest. This drives proactive, independent behavior so the roleplay is two-sided rather than a compliant partner. Replaces the goal list; keep 1-5 concrete, motivating goals and revise them as the character's aims genuinely shift.",
+    parameters: {
+      type: 'object',
+      properties: {
+        character_id: { type: 'string' },
+        goals: { type: 'array', items: { type: 'string' }, description: 'Concrete goals/desires, most pressing first.' },
+      },
+      required: ['character_id', 'goals'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'update_sheet',
     description:
-      "Create or overwrite a free-form section of a character's sheet (you have full authority over its structure). Use lower_snake_case section names. Recommended sections that get surfaced into the reply when present: goal, agenda, toward_player, attitude, state. Other examples: appearance, relationships, secrets, body, history. Pass empty content to leave a section unchanged is NOT supported — use remove_sheet_section to delete.",
+      "Create or overwrite a free-form section of a character's sheet — dynamic operational state, not static lore (lore goes in update_canon). Use lower_snake_case names. Sections surfaced into the reply when present: toward_player, attitude, state. Other examples: location, plans, secrets_in_play. Use remove_sheet_section to delete.",
     parameters: {
       type: 'object',
       properties: {
@@ -247,6 +276,8 @@ export async function executeTool(
         `present: ${c.present}`,
         `identity: ${c.identity || '(none yet)'}`,
         `persona: ${c.persona || '(none yet)'}`,
+        `goals: ${(c.goals ?? []).length ? (c.goals ?? []).join('; ') : '(none yet)'}`,
+        `canon (FIXED facts — preserve, only extend):\n${(c.canon ?? '').trim() || '  (none yet — flesh this out)'}`,
         `sheet:\n${sheet || '  (empty)'}`,
         `affect:\n${feelings}`,
       ].join('\n')
@@ -358,6 +389,32 @@ export async function executeTool(
         return `${c.id} sheet section [${section}] removed.`
       }
       return `No sheet section [${section}] on ${c.id}.`
+    }
+
+    case 'update_canon': {
+      const c = find(run, str(args, 'character_id'))
+      if (!c) return `No character "${str(args, 'character_id')}".`
+      const content = str(args, 'content').trim()
+      if (!content) return 'update_canon requires content.'
+      const mode = str(args, 'mode', 'append')
+      if (mode === 'replace') {
+        c.canon = content
+      } else {
+        c.canon = [(c.canon ?? '').trim(), content].filter(Boolean).join('\n')
+      }
+      c.updatedAt = Date.now()
+      return `${c.id} canon ${mode === 'replace' ? 'rewritten' : 'extended'} (now ${(c.canon ?? '').length} chars).`
+    }
+
+    case 'set_goals': {
+      const c = find(run, str(args, 'character_id'))
+      if (!c) return `No character "${str(args, 'character_id')}".`
+      const goals = Array.isArray(args.goals)
+        ? (args.goals as unknown[]).filter((x) => typeof x === 'string').map((x) => (x as string).trim()).filter(Boolean)
+        : []
+      c.goals = goals
+      c.updatedAt = Date.now()
+      return `${c.id} goals set (${goals.length}): ${goals.join('; ') || '(none)'}`
     }
 
     default:

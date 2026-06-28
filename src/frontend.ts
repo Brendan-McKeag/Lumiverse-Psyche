@@ -25,6 +25,9 @@ interface Character {
   identity: string
   persona: string
   demeanor: string
+  intent: string
+  canon: string
+  goals: string[]
   sheet: Record<string, string>
   emotions: Emotion[]
 }
@@ -67,6 +70,7 @@ export function setup(ctx: SpindleFrontendContext) {
     .ps-sheet { display:flex; flex-direction:column; gap:4px; }
     .ps-sheet .sk { font-size:11px; font-weight:600; }
     .ps-demeanor { font-size:12px; font-style:italic; line-height:1.45; padding:8px 10px; border-left:2px solid var(--lumiverse-accent,#6c8cff); background:var(--lumiverse-fill-subtle); border-radius:var(--lumiverse-radius); }
+    .ps-intent { font-size:11.5px; color:var(--lumiverse-accent,#6c8cff); padding:2px 2px; }
   `)
 
   const tab = ctx.ui.registerDrawerTab({
@@ -95,6 +99,16 @@ export function setup(ctx: SpindleFrontendContext) {
         </div>
         <div class="ps-muted ps-d-identity"></div>
         <div class="ps-demeanor" style="display:none"></div>
+        <div class="ps-muted ps-intent" style="display:none"></div>
+
+        <h4 class="ps-h">Goals &amp; desires (one per line)</h4>
+        <textarea class="ps-ta ps-goals" placeholder="What this character is pursuing, in their own interest."></textarea>
+        <div class="ps-row"><button class="ps-btn ps-save-goals">Save goals</button></div>
+
+        <h4 class="ps-h">Canon — established facts (fixed)</h4>
+        <textarea class="ps-ta ps-canon" style="min-height:120px" placeholder="The static character bible the engine builds and must not contradict."></textarea>
+        <div class="ps-row"><button class="ps-btn ps-save-canon">Save canon</button></div>
+
         <h4 class="ps-h">Hidden persona</h4>
         <textarea class="ps-ta ps-persona" placeholder="The character's private driver."></textarea>
         <div class="ps-row"><button class="ps-btn ps-save-persona">Save persona</button></div>
@@ -138,8 +152,11 @@ export function setup(ctx: SpindleFrontendContext) {
   const dName = q<HTMLElement>('.ps-d-name')
   const dIdentity = q<HTMLElement>('.ps-d-identity')
   const demeanorEl = q<HTMLElement>('.ps-demeanor')
+  const intentEl = q<HTMLElement>('.ps-intent')
   const presentEl = q<HTMLInputElement>('.ps-present')
   const personaEl = q<HTMLTextAreaElement>('.ps-persona')
+  const goalsEl = q<HTMLTextAreaElement>('.ps-goals')
+  const canonEl = q<HTMLTextAreaElement>('.ps-canon')
   const emosEl = q<HTMLElement>('.ps-emos')
   const sheetEl = q<HTMLElement>('.ps-sheetlist')
   const newSecEl = q<HTMLInputElement>('.ps-newsec')
@@ -218,8 +235,16 @@ export function setup(ctx: SpindleFrontendContext) {
     } else {
       demeanorEl.style.display = 'none'
     }
+    if (c.intent && c.intent.trim()) {
+      intentEl.textContent = `→ wants: ${c.intent}`
+      intentEl.style.display = 'block'
+    } else {
+      intentEl.style.display = 'none'
+    }
     presentEl.checked = c.present
     personaEl.value = c.persona
+    goalsEl.value = (c.goals ?? []).join('\n')
+    canonEl.value = c.canon ?? ''
 
     // bipolar axes first, then unipolar in a STABLE canonical order so the
     // editable fields don't reshuffle under the cursor as values change.
@@ -291,6 +316,14 @@ export function setup(ctx: SpindleFrontendContext) {
   q('.ps-save-persona').addEventListener('click', () => {
     const c = selected()
     if (c) ctx.sendToBackend({ type: 'save_persona', characterId: c.id, persona: personaEl.value })
+  })
+  q('.ps-save-goals').addEventListener('click', () => {
+    const c = selected()
+    if (c) ctx.sendToBackend({ type: 'save_goals', characterId: c.id, goals: goalsEl.value })
+  })
+  q('.ps-save-canon').addEventListener('click', () => {
+    const c = selected()
+    if (c) ctx.sendToBackend({ type: 'save_canon', characterId: c.id, canon: canonEl.value })
   })
   q('.ps-addsec').addEventListener('click', () => {
     const c = selected()

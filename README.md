@@ -31,9 +31,21 @@ description and a one-line summary. Everything else is rolled per run.
   present characters **relax toward their baseline** temperament (homeostasis).
 
 - **A self-authoring character sheet.** Beyond feelings, each character has a
-  free-form sheet (goals, attitude toward the player, relationships, secrets,
-  body state…) that the engine **rewrites Claude Code-style** — full authority to
-  add, edit, and delete sections — based on the totality of the story so far.
+  free-form sheet (attitude toward the player, plans, secrets, body state…) that
+  the engine **rewrites Claude Code-style** — full authority to add, edit, and
+  delete sections — based on the totality of the story so far.
+
+- **A growing, locked canon (the character bible).** The card is thin on
+  purpose. The engine **invents concrete static facts** to fill the blanks —
+  history, tastes, skills, relationships, quirks — and then treats them as
+  **fixed canon it must never contradict**, only extend. The character becomes a
+  specific, consistent person over the run instead of vague improv.
+
+- **Real agency, not a yes-man.** Each character carries durable **goals &
+  desires** and a per-turn **intent** (what they want now + the move they're
+  likely to make). The injected guidance pushes the writer model to have them
+  take initiative, steer the scene, set conditions, and push back or refuse —
+  pursuing their own agenda, not mirroring the player.
 
 - **Multi-character & full CRUD.** The card character is the primary target, but
   the engine introduces, advances, and retires supporting characters as the

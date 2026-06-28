@@ -213,6 +213,8 @@ function newCharacter(id, name, isPrimary) {
     present: isPrimary,
     emotions: neutralVector(),
     sheet: {},
+    canon: "",
+    goals: [],
     updatedAt: Date.now()
   };
 }
@@ -287,21 +289,34 @@ function groundedReadout(c) {
   return lines.join(`
 `);
 }
+var CANON_INJECT_CAP = 2200;
+var indent = (s, pad = "    ") => s.split(`
+`).map((l) => pad + l).join(`
+`);
 function characterBlock(c) {
   const lines = [];
   lines.push(`## ${c.name}${c.isPrimary ? "" : " (supporting character)"}`);
-  if (c.demeanor && c.demeanor.trim()) {
+  if (c.demeanor && c.demeanor.trim())
     lines.push(c.demeanor.trim());
-    lines.push("");
-    lines.push("Underneath (embody this \u2014 do not narrate or name it):");
-  }
+  if (c.intent && c.intent.trim())
+    lines.push(`Wants right now / likely to: ${c.intent.trim()}`);
+  lines.push("");
+  lines.push("Underneath (embody \u2014 do not narrate or name any of this):");
   lines.push(groundedReadout(c));
+  const goals = (c.goals ?? []).map((g) => g.trim()).filter(Boolean);
+  if (goals.length)
+    lines.push(`  goals & desires they are pursuing: ${goals.join("; ")}`);
   if (c.persona.trim())
-    lines.push(`  who they are: ${c.persona.trim()}`);
-  for (const key of ["goal", "goals", "agenda", "toward_player", "attitude", "state"]) {
+    lines.push(`  core personality & drives: ${c.persona.trim()}`);
+  for (const key of ["toward_player", "attitude", "state"]) {
     const s = c.sheet[key];
     if (s && s.trim())
       lines.push(`  ${key.replace(/_/g, " ")}: ${s.trim()}`);
+  }
+  const canon = (c.canon ?? "").trim();
+  if (canon) {
+    lines.push("  established canon (FIXED \u2014 honor exactly, never contradict):");
+    lines.push(indent(canon.slice(0, CANON_INJECT_CAP)));
   }
   return lines.join(`
 `);
@@ -315,12 +330,17 @@ function buildDirective(run) {
 
 `);
   return [
-    "[Psyche \u2014 how they are right now]",
-    "Portray each character below by ACTING their state \u2014 posture, tone, word",
-    "choice, what they reach for and what they hold back. Let stronger feelings",
-    "show more and break composure; where two pulls conflict, let it show as",
-    "hesitation, contradiction, push-and-pull. Embody it in the prose; never",
-    "recite or name these feelings, and never mention these notes.",
+    "[Psyche \u2014 character, agency & state]",
+    "Each character below is an INDEPENDENT person with their own goals \u2014 not a",
+    "compliant narrator, not a yes-man. Play them pursuing what THEY want: let them",
+    "take initiative, start things, change the subject, make demands, set conditions,",
+    "and push back, stall, or refuse when the player's lead cuts against their aims.",
+    "They move the scene as much as the player does, toward their own desires.",
+    "",
+    "Act their state through behavior \u2014 posture, tone, word choice, what they reach",
+    "for and hold back; let stronger feelings break composure and conflicting pulls",
+    "show as push-and-pull. Treat their established canon as fixed truth. Never",
+    "recite, name, or mention any of these notes \u2014 just live them.",
     "",
     blocks
   ].join(`
@@ -495,8 +515,35 @@ var TOOL_SCHEMAS = [
     }
   },
   {
+    name: "update_canon",
+    description: 'Add to (or rewrite) the character BIBLE \u2014 the freeform store of established STATIC facts the light card deliberately leaves blank: history, upbringing, tastes, skills, body specifics, relationships, beliefs, quirks, speech habits. PROACTIVELY INVENT concrete, specific facts to make this character fully their own person; a vague character is a failure. Once you write a fact here, treat it as FIXED canon and never contradict it later \u2014 only extend it. mode "append" (default) adds newly-established facts; "replace" reorganizes/condenses the whole bible without discarding established truth.',
+    parameters: {
+      type: "object",
+      properties: {
+        character_id: { type: "string" },
+        content: { type: "string", description: "Concrete, specific fact(s) to record (markdown)." },
+        mode: { type: "string", enum: ["append", "replace"], description: "append (default) or replace the whole bible." }
+      },
+      required: ["character_id", "content"],
+      additionalProperties: false
+    }
+  },
+  {
+    name: "set_goals",
+    description: "Set the character's durable goals / desires / agenda \u2014 what THEY want out of this scene, the player, and their own life, in their own self-interest. This drives proactive, independent behavior so the roleplay is two-sided rather than a compliant partner. Replaces the goal list; keep 1-5 concrete, motivating goals and revise them as the character's aims genuinely shift.",
+    parameters: {
+      type: "object",
+      properties: {
+        character_id: { type: "string" },
+        goals: { type: "array", items: { type: "string" }, description: "Concrete goals/desires, most pressing first." }
+      },
+      required: ["character_id", "goals"],
+      additionalProperties: false
+    }
+  },
+  {
     name: "update_sheet",
-    description: "Create or overwrite a free-form section of a character's sheet (you have full authority over its structure). Use lower_snake_case section names. Recommended sections that get surfaced into the reply when present: goal, agenda, toward_player, attitude, state. Other examples: appearance, relationships, secrets, body, history. Pass empty content to leave a section unchanged is NOT supported \u2014 use remove_sheet_section to delete.",
+    description: "Create or overwrite a free-form section of a character's sheet \u2014 dynamic operational state, not static lore (lore goes in update_canon). Use lower_snake_case names. Sections surfaced into the reply when present: toward_player, attitude, state. Other examples: location, plans, secrets_in_play. Use remove_sheet_section to delete.",
     parameters: {
       type: "object",
       properties: {
@@ -567,6 +614,9 @@ async function executeTool(run, name, args) {
         `present: ${c.present}`,
         `identity: ${c.identity || "(none yet)"}`,
         `persona: ${c.persona || "(none yet)"}`,
+        `goals: ${(c.goals ?? []).length ? (c.goals ?? []).join("; ") : "(none yet)"}`,
+        `canon (FIXED facts \u2014 preserve, only extend):
+${(c.canon ?? "").trim() || "  (none yet \u2014 flesh this out)"}`,
         `sheet:
 ${sheet || "  (empty)"}`,
         `affect:
@@ -695,6 +745,32 @@ ${feelings}`
       }
       return `No sheet section [${section}] on ${c.id}.`;
     }
+    case "update_canon": {
+      const c = find(run, str(args, "character_id"));
+      if (!c)
+        return `No character "${str(args, "character_id")}".`;
+      const content = str(args, "content").trim();
+      if (!content)
+        return "update_canon requires content.";
+      const mode = str(args, "mode", "append");
+      if (mode === "replace") {
+        c.canon = content;
+      } else {
+        c.canon = [(c.canon ?? "").trim(), content].filter(Boolean).join(`
+`);
+      }
+      c.updatedAt = Date.now();
+      return `${c.id} canon ${mode === "replace" ? "rewritten" : "extended"} (now ${(c.canon ?? "").length} chars).`;
+    }
+    case "set_goals": {
+      const c = find(run, str(args, "character_id"));
+      if (!c)
+        return `No character "${str(args, "character_id")}".`;
+      const goals = Array.isArray(args.goals) ? args.goals.filter((x) => typeof x === "string").map((x) => x.trim()).filter(Boolean) : [];
+      c.goals = goals;
+      c.updatedAt = Date.now();
+      return `${c.id} goals set (${goals.length}): ${goals.join("; ") || "(none)"}`;
+    }
     default:
       return `Unknown tool ${name}.`;
   }
@@ -737,11 +813,21 @@ function seedSystemPrompt() {
     "Stay faithful to every basic fact the card DOES state (species, sex, age,",
     'appearance, name). Never contradict or "correct" them.',
     "",
+    "Commit to a real, specific person \u2014 invent concrete details (background, tastes,",
+    "skills, quirks, relationships, body specifics) to fill the blanks the card leaves.",
+    "Give them their OWN goals and desires so they are a player in the scene, not a",
+    "mirror for whoever they meet.",
+    "",
     "Return ONLY JSON of this shape:",
     "{",
     '  "identity": "physical facts + grounded summary, faithful to the card",',
     '  "persona": "the hidden driver: personality, interests, wants, fears, voice, how',
     '              they treat people \u2014 2-5 sentences that will steer how they act",',
+    '  "canon": "established STATIC facts you are inventing to make them specific:',
+    "            history, upbringing, tastes, skills, relationships, quirks, speech.",
+    '            Concrete bullet-like sentences. This becomes fixed truth for the run.",',
+    '  "goals": ["1-5 concrete things THEY want \u2014 out of life, the scene, whoever they',
+    '            meet \u2014 in their own self-interest, most pressing first"],',
     '  "baselines": { "<emotion>": <resting value>, ... },',
     '  "opening_state": { "<emotion>": <current value at scene start>, ... }',
     "}",
@@ -806,6 +892,11 @@ async function seedRun(run, primary, cardContext, opts) {
     primary.identity = cardContext.slice(0, 1200);
   if (typeof parsed.persona === "string")
     primary.persona = parsed.persona.trim();
+  if (typeof parsed.canon === "string" && parsed.canon.trim())
+    primary.canon = parsed.canon.trim();
+  if (Array.isArray(parsed.goals)) {
+    primary.goals = parsed.goals.filter((g) => typeof g === "string").map((g) => g.trim()).filter(Boolean);
+  }
   const setOne = (key, value, which) => {
     const def = EMOTION_BY_KEY[key];
     if (!def || typeof value !== "number" || !Number.isFinite(value))
@@ -823,7 +914,7 @@ async function seedRun(run, primary, cardContext, opts) {
   for (const [k, v2] of Object.entries(parsed.opening_state ?? {}))
     setOne(k, v2, "value");
   primary.updatedAt = Date.now();
-  return `seed ${run.seed}: rolled persona + starting temperament.`;
+  return `seed ${run.seed}: rolled persona, canon (${(primary.canon ?? "").length} chars), ${(primary.goals ?? []).length} goals + starting temperament.`;
 }
 function updateSystemPrompt(directive) {
   return [
@@ -858,21 +949,32 @@ function updateSystemPrompt(directive) {
     "  \u2022 Update the affect of every character PRESENT in the scene, based on what was",
     "    said and done to and by them. Relieve feelings that the moment soothed",
     "    (negative intensity) as readily as you raise ones it provoked.",
-    "  \u2022 Rewrite their sheet sections as facts change \u2014 goals, attitude toward the",
-    "    player, relationships, secrets, body state. You have full authority to add,",
-    "    edit, and delete sections (update_sheet / remove_sheet_section).",
+    "  \u2022 Grow the CANON (update_canon): the card is intentionally thin \u2014 it is YOUR job",
+    "    to make this character a fully realized, specific person. Each turn, when the",
+    "    scene touches an undefined area, invent and record concrete static facts",
+    "    (history, tastes, skills, relationships, body, speech habits). Keep doing this",
+    "    until the character is richly defined, then mostly hold.",
+    "  \u2022 Keep GOALS current (set_goals): what this character is pursuing, in their own",
+    "    interest. They should always have an agenda that the next reply can act on.",
+    "  \u2022 Rewrite dynamic sheet sections as state changes \u2014 toward_player, attitude,",
+    "    state, plans (update_sheet / remove_sheet_section). Static lore goes in canon,",
+    "    not the sheet.",
     "  \u2022 Introduce supporting characters the story brings in (create_character) and set",
-    "    who is present (set_present). Advance their persona as they reveal themselves.",
+    "    who is present (set_present). Give them canon + goals too.",
     "  \u2022 Occasionally nudge a baseline (set_baseline) when a lasting change of",
     "    temperament is earned \u2014 not every turn.",
     "",
-    "FIDELITY. Never invent basic facts (species, sex, age, name, appearance). Keep the",
-    "card as the source of truth for the primary character. If something is not",
-    "established, leave it out rather than guess. Read a character before you rewrite it.",
+    "CANON IS LAW. Once a fact is in a character's canon it is FIXED truth: never",
+    "contradict or quietly retcon it \u2014 only extend it, or rarely refine wording without",
+    "changing meaning. Read a character before rewriting it. You may freely INVENT to",
+    "fill blanks, but you may NOT contradict (a) what the card explicitly states about",
+    "the primary character (species, sex, age, name, appearance) or (b) anything already",
+    'in canon or established in the story. A wrong "fact" that breaks continuity is the',
+    "worst failure; an unfilled blank is just a future opportunity.",
     "",
     "ECONOMY. You see the whole story each run, but do not redo the whole mind every",
-    "turn. Make the changes THIS turn warrants, then stop. When done, reply with a",
-    "one-line summary and no tool calls.",
+    "turn. Make the changes THIS turn warrants (affect + a little canon/goal growth),",
+    "then stop. When done, reply with a one-line summary and no tool calls.",
     directive.trim() ? `
 OPERATOR DIRECTIVE:
 ${directive.trim()}` : ""
@@ -977,22 +1079,25 @@ async function runPsycheAgent(run, transcript, cardContext, opts) {
 function demeanorSystemPrompt() {
   return [
     AGENT_SENTINEL,
-    "You are Psyche's behavior synthesizer. Given a character's persona and their",
-    "current inner state (energy, agreeableness, what pulls them toward vs. away,",
-    "their power stance, and any inner tensions), write a tight DEMEANOR BRIEF: how",
-    "they are carrying themselves and behaving RIGHT NOW.",
+    "You are Psyche's behavior synthesizer. For each character you are given their",
+    "persona, goals/desires, current inner state (energy, agreeableness, what pulls",
+    "them toward vs. away, power stance, inner tensions) and the recent scene. Produce",
+    "two things per character:",
     "",
-    "Rules:",
-    "  \u2022 2-4 sentences, present tense, third person using their name.",
-    "  \u2022 Describe BEHAVIOR \u2014 posture, eye contact, tone, pacing, what they pursue,",
-    "    what they suppress \u2014 not a list of emotions. Weave the combination together:",
-    "    show how the strongest feeling is colored, fought, or amplified by the rest.",
-    "  \u2022 When there is a tension, make it visible as contradiction or push-and-pull.",
-    "  \u2022 Never name an emotion or a number; never describe plot events; do not write",
-    "    dialogue. Just the read of their manner.",
+    "  demeanor \u2014 a tight 2-4 sentence, present-tense read of how they are carrying",
+    "    themselves and behaving RIGHT NOW. BEHAVIOR (posture, eye contact, tone,",
+    "    pacing, what they pursue/suppress), not a list of emotions. Weave the",
+    "    combination: show how the strongest feeling is colored, fought, or amplified",
+    "    by the rest; make any tension visible as contradiction or push-and-pull.",
     "",
-    "Return ONLY JSON mapping each character id to its brief:",
-    '{ "<id>": "<brief>", ... }'
+    "  intent \u2014 1-2 sentences: what this character WANTS this moment (tied to their",
+    "    goals) and the concrete move they are likely to make to get it \u2014 initiating,",
+    "    steering, testing, pushing back, withholding. This is what makes them drive",
+    "    the scene rather than just react. It must be THEIR agenda, not the player's.",
+    "",
+    "Never name an emotion or a number; never narrate plot that has not happened; do",
+    "not write dialogue. Return ONLY JSON mapping each character id to an object:",
+    '{ "<id>": { "demeanor": "<...>", "intent": "<...>" }, ... }'
   ].join(`
 `);
 }
@@ -1000,7 +1105,12 @@ async function synthesizeDemeanor(run, recentScene, opts) {
   const present = Object.values(run.characters).filter((c) => c.present);
   if (!present.length)
     return;
-  const blocks = present.map((c) => [`### ${c.id} \u2014 ${c.name}`, c.persona ? `persona: ${c.persona}` : "", groundedReadout(c)].filter(Boolean).join(`
+  const blocks = present.map((c) => [
+    `### ${c.id} \u2014 ${c.name}`,
+    c.persona ? `persona: ${c.persona}` : "",
+    (c.goals ?? []).length ? `goals: ${(c.goals ?? []).join("; ")}` : "",
+    groundedReadout(c)
+  ].filter(Boolean).join(`
 `)).join(`
 
 `);
@@ -1011,10 +1121,10 @@ async function synthesizeDemeanor(run, recentScene, opts) {
       content: [
         recentScene.trim() ? ["Recent scene (most recent last):", '"""', recentScene.trim(), '"""', ""].join(`
 `) : "",
-        "Characters and their current inner state:",
+        "Characters (persona, goals, current inner state):",
         blocks,
         "",
-        "Write each one's demeanor brief now. Return only the JSON."
+        "Write each one's demeanor + intent now. Return only the JSON."
       ].filter(Boolean).join(`
 `)
     }
@@ -1031,9 +1141,19 @@ async function synthesizeDemeanor(run, recentScene, opts) {
   if (!parsed)
     return;
   for (const c of present) {
-    const b = parsed[c.id];
-    if (typeof b === "string" && b.trim())
-      c.demeanor = b.trim();
+    const entry = parsed[c.id];
+    if (!entry)
+      continue;
+    if (typeof entry === "string") {
+      if (entry.trim())
+        c.demeanor = entry.trim();
+      continue;
+    }
+    const o = entry;
+    if (typeof o.demeanor === "string" && o.demeanor.trim())
+      c.demeanor = o.demeanor.trim();
+    if (typeof o.intent === "string" && o.intent.trim())
+      c.intent = o.intent.trim();
   }
 }
 
@@ -1321,6 +1441,9 @@ function snapshotRun(run) {
     identity: c.identity,
     persona: c.persona,
     demeanor: c.demeanor ?? "",
+    intent: c.intent ?? "",
+    canon: c.canon ?? "",
+    goals: c.goals ?? [],
     sheet: c.sheet,
     emotions: EMOTIONS.map((def) => {
       const e = c.emotions[def.key] ?? { value: 0, baseline: 0 };
@@ -1445,6 +1568,33 @@ spindle.onFrontendMessage(async (payload, userId) => {
         const c = findChar(run, payload.characterId);
         if (c && typeof payload.persona === "string") {
           c.persona = payload.persona;
+          await saveRun(run);
+        }
+        await sendState(chatId, userId);
+        break;
+      }
+      case "save_canon": {
+        const chatId = await activeChatId(payload.chatId, userId);
+        if (!chatId)
+          break;
+        const run = await loadRun(chatId);
+        const c = findChar(run, payload.characterId);
+        if (c && typeof payload.canon === "string") {
+          c.canon = payload.canon;
+          await saveRun(run);
+        }
+        await sendState(chatId, userId);
+        break;
+      }
+      case "save_goals": {
+        const chatId = await activeChatId(payload.chatId, userId);
+        if (!chatId)
+          break;
+        const run = await loadRun(chatId);
+        const c = findChar(run, payload.characterId);
+        if (c && typeof payload.goals === "string") {
+          c.goals = String(payload.goals).split(`
+`).map((g) => g.trim()).filter(Boolean);
           await saveRun(run);
         }
         await sendState(chatId, userId);
