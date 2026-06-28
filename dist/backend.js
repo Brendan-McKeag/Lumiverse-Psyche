@@ -1134,38 +1134,42 @@ async function runPsycheAgent(run, transcript, cardContext, opts) {
   }
   return { rounds, toolCalls, finalNote };
 }
-function demeanorSystemPrompt() {
+function ruminateSystemPrompt() {
   return [
     AGENT_SENTINEL,
-    "You are Psyche's behavior synthesizer. For each character you are given their",
-    "persona, goals/desires, current inner state (energy, agreeableness, what pulls",
-    "them toward vs. away, power stance, inner tensions) and the recent scene. Produce",
-    "two things per character:",
+    "You are Psyche's DELIBERATION stage. You run after the mind has been updated and",
+    "BEFORE the prose writer. For each character you are given who they are (persona,",
+    "fixed canon, goals), their CURRENT emotional state (energy, agreeableness, what",
+    "pulls them toward/away, power stance, inner tensions, and any OVERRIDING STATE),",
+    "and the recent scene.",
     "",
-    "  demeanor \u2014 a tight 2-4 sentence, present-tense read of how they are carrying",
-    "    themselves and behaving RIGHT NOW. BEHAVIOR (posture, eye contact, tone,",
-    "    pacing, what they pursue/suppress), not a list of emotions. Weave the",
-    "    combination: show how the strongest feeling is colored, fought, or amplified",
-    "    by the rest; make any tension visible as contradiction or push-and-pull.",
+    "RUMINATE first \u2014 actually think it through: given exactly how this character feels",
+    "right now, how does that change the way they meet THIS situation? What does the",
+    "state make them want, and want to avoid? What will they do differently from their",
+    "calm baseline self? Where does it push them to act, and where does it stop them?",
+    "How does it color the way they read the player and the moment? Account for the",
+    "whole combination \u2014 how the strongest feeling is amplified, fought, or twisted by",
+    "the others \u2014 and for their goals. Then commit to it.",
     "",
-    "  intent \u2014 1-2 sentences: what this character WANTS this moment (tied to their",
-    "    goals) and the concrete move they are likely to make to get it \u2014 initiating,",
-    "    steering, testing, pushing back, withholding. This is what makes them drive",
-    "    the scene rather than just react. It must be THEIR agenda, not the player's.",
+    "Output two fields per character:",
+    "  directive \u2014 3-5 sentences of concrete behavioral direction for the prose writer:",
+    "    what this character DOES this turn given how they feel \u2014 manner, tone, what",
+    "    they pursue, what they resist or withhold, the move they make, how the feelings",
+    "    reshape their choices and voice away from baseline. Write actions and bearing,",
+    "    not feelings; no emotion labels, no numbers.",
+    "  intent \u2014 1-2 sentences: what they want this moment and the concrete move they are",
+    "    likely to make to get it. THEIR agenda, driving the scene \u2014 not the player's.",
     "",
-    'OVERRIDE: if a character has an "OVERRIDING STATE", that feeling has seized them.',
-    "The demeanor must show them CONSUMED by it \u2014 composure gone, not balanced or",
-    '"in character"; at all-consuming intensity they have broken from their usual self.',
-    "The intent must be whatever that feeling drives them to do, full force. Do not",
-    "soften it with their normal manner.",
+    "Honor an OVERRIDING STATE at full force: if a feeling is all-consuming the character",
+    "is run by it and breaks from their usual self \u2014 do NOT moderate it back toward their",
+    "persona or composure. Canon facts stay fixed truth. Do not write dialogue or narrate",
+    "events that have not happened yet.",
     "",
-    "Never name an emotion or a number; never narrate plot that has not happened; do",
-    "not write dialogue. Return ONLY JSON mapping each character id to an object:",
-    '{ "<id>": { "demeanor": "<...>", "intent": "<...>" }, ... }'
+    'Return ONLY JSON: { "<id>": { "directive": "<...>", "intent": "<...>" }, ... }'
   ].join(`
 `);
 }
-async function synthesizeDemeanor(run, recentScene, opts) {
+async function ruminate(run, recentScene, opts) {
   const present = Object.values(run.characters).filter((c) => c.present);
   if (!present.length)
     return;
@@ -1173,6 +1177,8 @@ async function synthesizeDemeanor(run, recentScene, opts) {
     `### ${c.id} \u2014 ${c.name}`,
     c.persona ? `persona: ${c.persona}` : "",
     (c.goals ?? []).length ? `goals: ${(c.goals ?? []).join("; ")}` : "",
+    (c.canon ?? "").trim() ? `canon (fixed facts):
+${(c.canon ?? "").trim()}` : "",
     overrideDirective(c),
     groundedReadout(c)
   ].filter(Boolean).join(`
@@ -1180,16 +1186,16 @@ async function synthesizeDemeanor(run, recentScene, opts) {
 
 `);
   const messages = [
-    { role: "system", content: demeanorSystemPrompt() },
+    { role: "system", content: ruminateSystemPrompt() },
     {
       role: "user",
       content: [
         recentScene.trim() ? ["Recent scene (most recent last):", '"""', recentScene.trim(), '"""', ""].join(`
 `) : "",
-        "Characters (persona, goals, current inner state):",
+        "Characters (persona, canon, goals, current emotional state):",
         blocks,
         "",
-        "Write each one's demeanor + intent now. Return only the JSON."
+        "Ruminate, then write each one's directive + intent. Return only the JSON."
       ].filter(Boolean).join(`
 `)
     }
@@ -1198,7 +1204,6 @@ async function synthesizeDemeanor(run, recentScene, opts) {
     type: "quiet",
     messages,
     parameters: { temperature: 0.7 },
-    reasoning: { source: "off" },
     signal: opts.signal,
     userId: opts.userId,
     ...opts.connectionId ? { connection_id: opts.connectionId } : {}
@@ -1216,8 +1221,9 @@ async function synthesizeDemeanor(run, recentScene, opts) {
       continue;
     }
     const o = entry;
-    if (typeof o.demeanor === "string" && o.demeanor.trim())
-      c.demeanor = o.demeanor.trim();
+    const directive = typeof o.directive === "string" ? o.directive : typeof o.demeanor === "string" ? o.demeanor : "";
+    if (directive.trim())
+      c.demeanor = directive.trim();
     if (typeof o.intent === "string" && o.intent.trim())
       c.intent = o.intent.trim();
   }
@@ -1391,13 +1397,13 @@ async function runAgentForChat(chatId, reply, userId) {
       spindle.log.error(`[psyche] ${char.name}: update pass failed \u2014 ${m}`);
     }
     try {
-      await synthesizeDemeanor(run, transcript.slice(-4000), {
+      await ruminate(run, transcript.slice(-6000), {
         signal: AbortSignal.timeout(config.agentTimeoutMs),
         userId,
         connectionId: config.agentConnectionId || undefined
       });
     } catch (err) {
-      spindle.log.error(`[psyche] demeanor synthesis failed: ${String(err)}`);
+      spindle.log.error(`[psyche] rumination failed: ${String(err)}`);
     }
     await saveRun(run);
     await refreshInjection(chatId, userId);

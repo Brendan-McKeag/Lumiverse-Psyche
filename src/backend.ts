@@ -12,7 +12,7 @@ import {
   isInjectionEntry,
   slugify,
 } from './run'
-import { seedRun, runPsycheAgent, synthesizeDemeanor } from './agent'
+import { seedRun, runPsycheAgent, ruminate } from './agent'
 import {
   EMOTIONS,
   EMOTION_BY_KEY,
@@ -223,15 +223,16 @@ async function runAgentForChat(chatId: string, reply: string, userId?: string) {
       spindle.log.error(`[psyche] ${char.name}: update pass failed — ${m}`)
     }
 
-    // Weave the updated vector into present-tense behavioral briefs.
+    // Stage 2 — ruminate on how the updated emotional state reshapes behavior,
+    // and produce the directive the prose writer will follow next.
     try {
-      await synthesizeDemeanor(run, transcript.slice(-4000), {
+      await ruminate(run, transcript.slice(-6000), {
         signal: AbortSignal.timeout(config.agentTimeoutMs),
         userId,
         connectionId: config.agentConnectionId || undefined,
       })
     } catch (err) {
-      spindle.log.error(`[psyche] demeanor synthesis failed: ${String(err)}`)
+      spindle.log.error(`[psyche] rumination failed: ${String(err)}`)
     }
 
     await saveRun(run)
