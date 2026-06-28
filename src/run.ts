@@ -220,7 +220,16 @@ export async function ensureInjectionEntry(
     })
     if (meta?.entryId) {
       const entry = await spindle.world_books.entries.get(meta.entryId, userId).catch(() => null)
-      if (entry) return meta.entryId
+      if (entry) {
+        // Migrate entries from the old disabled/non-constant scheme so they
+        // actually inject (always-on, content-overwritten each turn).
+        if (entry.disabled || !entry.constant) {
+          await spindle.world_books.entries
+            .update(meta.entryId, { disabled: false, constant: true }, userId)
+            .catch(() => {})
+        }
+        return meta.entryId
+      }
     }
 
     // Provision a fresh book + entry and attach the book to the card.
@@ -238,10 +247,13 @@ export async function ensureInjectionEntry(
         comment: '[Psyche] live emotional state',
         content: '(emotional state will appear here while Psyche is active)',
         key: ['__psyche_state__'],
-        // Disabled at rest -> nothing injects when the extension is off. The
-        // interceptor force-injects + content-overrides it while running.
-        disabled: true,
-        constant: false,
+        // CONSTANT + enabled: a constant ("always-on") entry is injected into
+        // every prompt regardless of keywords — the most reliable world-info
+        // mechanism there is. We keep its CONTENT current by overwriting it each
+        // turn, so there is no dependence on forced/mutated. The panel toggle is
+        // honored by a world-info interceptor that disables it when off.
+        disabled: false,
+        constant: true,
         extensions: { [PSYCHE_EXT]: { inject: true } },
       },
       userId,

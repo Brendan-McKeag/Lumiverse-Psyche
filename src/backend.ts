@@ -1,5 +1,4 @@
 declare const spindle: import('lumiverse-spindle-types').SpindleAPI
-type LlmMessage = import('lumiverse-spindle-types').LlmMessageDTO
 
 import {
   RunState,
@@ -9,9 +8,11 @@ import {
   newCharacter,
   backfillEmotions,
   buildDirective,
+  ensureInjectionEntry,
+  isInjectionEntry,
   slugify,
 } from './run'
-import { seedRun, runPsycheAgent, AGENT_SENTINEL } from './agent'
+import { seedRun, runPsycheAgent } from './agent'
 import {
   EMOTIONS,
   EMOTION_BY_KEY,
@@ -218,6 +219,7 @@ async function runAgentForChat(chatId: string, reply: string, userId?: string) {
     }
 
     await saveRun(run)
+    await refreshInjection(chatId, userId) // push the new state into the prompt
 
     spindle.sendToFrontend({
       type: 'state_changed',
@@ -285,59 +287,51 @@ spindle.on('GENERATION_STOPPED', async (payload, userId) => {
 })
 
 /* ----------------------- live state injection ---------------------- *
- * The live emotional state reaches the visible reply by APPENDING a system
- * message to the assembled prompt, via a pre-generation prompt interceptor.
- * This is direct and mechanism-free: no world-book entry, no disabled flag, no
- * `mutated` content-override to depend on — whatever buildDirective() produces
- * is exactly what the model sees, so editing a value changes the next reply.
+ * The live emotional state reaches the visible reply through a CONSTANT
+ * ("always-on") world-info entry attached to the character. A constant entry is
+ * injected into every prompt regardless of keywords — the most reliable
+ * world-info mechanism — so we simply OVERWRITE its content with the current
+ * directive after each turn and after any manual edit. No forced/mutated/
+ * disabled-resurrection to depend on: what we write is what the model sees.
  *
- * We skip our own out-of-band seed/update generations (they carry the agent
- * sentinel) and pass everything through untouched when the panel toggle is off.
- * The chat is resolved from the interceptor context when present, else from the
- * user's active chat (this is a user-scoped extension).
+ * The panel toggle is honored by a world-info interceptor that disables our
+ * entry while config.enabled is false, so turning Psyche off live stops
+ * injection without needing a write.
  * ------------------------------------------------------------------ */
 
-// One-time diagnostics so it is obvious from the logs whether state reaches the
-// prompt, without spamming every generation.
 let loggedInject = false
 
-async function promptInjector(messages: LlmMessage[], context: unknown): Promise<LlmMessage[]> {
+/** Overwrite the character's constant injection entry with the current state. */
+async function refreshInjection(chatId: string, userId?: string) {
   try {
-    if (!config.enabled) return messages
-    // Never inject into Psyche's own seed/update agent calls.
-    for (const m of messages) {
-      if (typeof m.content === 'string' && m.content.includes(AGENT_SENTINEL)) return messages
-    }
-
-    const cx = context as { chatId?: string } | undefined
-    let chatId = typeof cx?.chatId === 'string' ? cx.chatId : undefined
-    if (!chatId) {
-      const active = await spindle.chats.getActive().catch(() => null)
-      chatId = active?.id
-    }
-    if (!chatId) return messages
-
+    const char = await characterForChat(chatId, userId)
+    if (!char) return
+    const entryId = await ensureInjectionEntry(char.id, char.name, userId)
+    if (!entryId) return
     const run = await loadRun(chatId).catch(() => null)
-    if (!run) return messages
-    const directive = buildDirective(run)
-    if (!directive) return messages
-
+    const directive = (run && buildDirective(run)) || '(no active emotional state)'
+    await spindle.world_books.entries.update(entryId, { content: directive }, userId)
     if (!loggedInject) {
       loggedInject = true
-      spindle.log.info(`[psyche] injecting emotional state (${directive.length} chars) into chat ${chatId}`)
+      spindle.log.info(`[psyche] wrote emotional state (${directive.length} chars) to injection entry for chat ${chatId}`)
     }
-    // Append as a trailing system instruction — late position = high salience.
-    return [...messages, { role: 'system', content: directive }]
   } catch (err) {
-    spindle.log.error(`[psyche] injection error: ${String(err)}`)
-    return messages
+    spindle.log.error(`[psyche] refreshInjection failed: ${String(err)}`)
   }
+}
+
+// While the panel toggle is OFF, disable our constant entry so nothing injects;
+// while ON, leave it alone (a constant entry injects its current content itself).
+async function injectionInterceptor(ctx: import('lumiverse-spindle-types').WorldInfoInterceptorCtxDTO) {
+  if (config.enabled) return
+  const ids = ctx.entries.filter((e) => isInjectionEntry(e.extensions)).map((e) => e.id)
+  return ids.length ? { disabled: ids } : undefined
 }
 
 function registerInjectionInterceptor() {
   try {
-    spindle.registerInterceptor(promptInjector, 50)
-    spindle.log.info('[psyche] prompt interceptor registered')
+    spindle.registerWorldInfoInterceptor(injectionInterceptor, 50)
+    spindle.log.info('[psyche] injection interceptor registered')
   } catch (err) {
     spindle.log.warn(`[psyche] interceptor registration failed: ${String(err)}`)
   }
@@ -400,6 +394,9 @@ async function sendState(chatId: string | null, userId?: string, note?: string) 
     spindle.sendToFrontend({ type: 'state', snapshot: null, note }, userId)
     return
   }
+  // Keep the injected state current whenever the panel syncs — this is how a
+  // manual value edit reaches the next reply.
+  await refreshInjection(chatId, userId)
   const run = await loadRun(chatId)
   const char = await characterForChat(chatId, userId)
   spindle.sendToFrontend(

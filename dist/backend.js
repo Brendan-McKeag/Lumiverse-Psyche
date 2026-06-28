@@ -247,6 +247,52 @@ function buildDirective(run) {
   ].join(`
 `);
 }
+var PSYCHE_EXT = "psyche";
+var injectMetaPath = (cid) => `inject/${cid}.json`;
+function isInjectionEntry(extensions) {
+  const wf = extensions?.[PSYCHE_EXT];
+  return Boolean(wf?.inject);
+}
+async function ensureInjectionEntry(characterId, characterName, userId) {
+  try {
+    const meta = await spindle.storage.getJson(injectMetaPath(characterId), {
+      fallback: null
+    });
+    if (meta?.entryId) {
+      const entry2 = await spindle.world_books.entries.get(meta.entryId, userId).catch(() => null);
+      if (entry2) {
+        if (entry2.disabled || !entry2.constant) {
+          await spindle.world_books.entries.update(meta.entryId, { disabled: false, constant: true }, userId).catch(() => {});
+        }
+        return meta.entryId;
+      }
+    }
+    const book = await spindle.world_books.create({
+      name: `${characterName || "Character"} \u2014 Psyche`,
+      description: "Live emotional state injected by the Psyche extension. Managed automatically.",
+      metadata: { psyche: true }
+    }, userId);
+    const entry = await spindle.world_books.entries.create(book.id, {
+      comment: "[Psyche] live emotional state",
+      content: "(emotional state will appear here while Psyche is active)",
+      key: ["__psyche_state__"],
+      disabled: false,
+      constant: true,
+      extensions: { [PSYCHE_EXT]: { inject: true } }
+    }, userId);
+    const char = await spindle.characters.get(characterId, userId).catch(() => null);
+    const current = char?.world_book_ids ?? [];
+    if (!current.includes(book.id)) {
+      await spindle.characters.update(characterId, { world_book_ids: [...current, book.id] }, userId);
+    }
+    await spindle.storage.setJson(injectMetaPath(characterId), { bookId: book.id, entryId: entry.id });
+    spindle.log.info(`[psyche] provisioned injection entry ${entry.id} for character ${characterId}`);
+    return entry.id;
+  } catch (err) {
+    spindle.log.error(`[psyche] ensureInjectionEntry failed: ${String(err)}`);
+    return null;
+  }
+}
 
 // src/tools.ts
 var str = (a, k, d = "") => typeof a[k] === "string" ? a[k] : d;
@@ -1015,6 +1061,7 @@ async function runAgentForChat(chatId, reply, userId) {
       spindle.log.error(`[psyche] ${char.name}: update pass failed \u2014 ${m}`);
     }
     await saveRun(run);
+    await refreshInjection(chatId, userId);
     spindle.sendToFrontend({
       type: "state_changed",
       chatId,
@@ -1073,42 +1120,35 @@ spindle.on("GENERATION_STOPPED", async (payload, userId) => {
   await runAgentForChat(payload.chatId, reply, userId);
 });
 var loggedInject = false;
-async function promptInjector(messages, context) {
+async function refreshInjection(chatId, userId) {
   try {
-    if (!config.enabled)
-      return messages;
-    for (const m of messages) {
-      if (typeof m.content === "string" && m.content.includes(AGENT_SENTINEL))
-        return messages;
-    }
-    const cx = context;
-    let chatId = typeof cx?.chatId === "string" ? cx.chatId : undefined;
-    if (!chatId) {
-      const active = await spindle.chats.getActive().catch(() => null);
-      chatId = active?.id;
-    }
-    if (!chatId)
-      return messages;
+    const char = await characterForChat(chatId, userId);
+    if (!char)
+      return;
+    const entryId = await ensureInjectionEntry(char.id, char.name, userId);
+    if (!entryId)
+      return;
     const run = await loadRun(chatId).catch(() => null);
-    if (!run)
-      return messages;
-    const directive = buildDirective(run);
-    if (!directive)
-      return messages;
+    const directive = run && buildDirective(run) || "(no active emotional state)";
+    await spindle.world_books.entries.update(entryId, { content: directive }, userId);
     if (!loggedInject) {
       loggedInject = true;
-      spindle.log.info(`[psyche] injecting emotional state (${directive.length} chars) into chat ${chatId}`);
+      spindle.log.info(`[psyche] wrote emotional state (${directive.length} chars) to injection entry for chat ${chatId}`);
     }
-    return [...messages, { role: "system", content: directive }];
   } catch (err) {
-    spindle.log.error(`[psyche] injection error: ${String(err)}`);
-    return messages;
+    spindle.log.error(`[psyche] refreshInjection failed: ${String(err)}`);
   }
+}
+async function injectionInterceptor(ctx) {
+  if (config.enabled)
+    return;
+  const ids = ctx.entries.filter((e) => isInjectionEntry(e.extensions)).map((e) => e.id);
+  return ids.length ? { disabled: ids } : undefined;
 }
 function registerInjectionInterceptor() {
   try {
-    spindle.registerInterceptor(promptInjector, 50);
-    spindle.log.info("[psyche] prompt interceptor registered");
+    spindle.registerWorldInfoInterceptor(injectionInterceptor, 50);
+    spindle.log.info("[psyche] injection interceptor registered");
   } catch (err) {
     spindle.log.warn(`[psyche] interceptor registration failed: ${String(err)}`);
   }
@@ -1165,6 +1205,7 @@ async function sendState(chatId, userId, note) {
     spindle.sendToFrontend({ type: "state", snapshot: null, note }, userId);
     return;
   }
+  await refreshInjection(chatId, userId);
   const run = await loadRun(chatId);
   const char = await characterForChat(chatId, userId);
   spindle.sendToFrontend({ type: "state", characterName: char?.name ?? null, snapshot: snapshotRun(run), note }, userId);
