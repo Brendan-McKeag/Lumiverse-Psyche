@@ -122,7 +122,7 @@ export async function seedRun(
   run: RunState,
   primary: CharacterState,
   cardContext: string,
-  opts: { signal?: AbortSignal; userId?: string },
+  opts: { signal?: AbortSignal; userId?: string; connectionId?: string },
 ): Promise<string> {
   const messages: LlmMessage[] = [
     { role: 'system', content: seedSystemPrompt() },
@@ -148,6 +148,7 @@ export async function seedRun(
     reasoning: { source: 'off' },
     signal: opts.signal,
     userId: opts.userId,
+    ...(opts.connectionId ? { connection_id: opts.connectionId } : {}),
   })) as { content?: string }
 
   const parsed = extractJson(res.content ?? '') as SeedResult | null
@@ -291,7 +292,7 @@ export async function runPsycheAgent(
   run: RunState,
   transcript: string,
   cardContext: string,
-  opts: { maxRounds: number; directive: string; signal?: AbortSignal; userId?: string },
+  opts: { maxRounds: number; directive: string; signal?: AbortSignal; userId?: string; connectionId?: string },
 ): Promise<AgentResult> {
   const messages: LlmMessage[] = [
     { role: 'system', content: updateSystemPrompt(opts.directive) },
@@ -334,6 +335,7 @@ export async function runPsycheAgent(
       reasoning: { source: 'off' },
       signal: opts.signal,
       userId: opts.userId,
+      ...(opts.connectionId ? { connection_id: opts.connectionId } : {}),
     })) as {
       content?: string
       tool_calls?: { name: string; args: Record<string, unknown>; call_id: string }[]
@@ -409,7 +411,7 @@ function demeanorSystemPrompt(): string {
 export async function synthesizeDemeanor(
   run: RunState,
   recentScene: string,
-  opts: { signal?: AbortSignal; userId?: string },
+  opts: { signal?: AbortSignal; userId?: string; connectionId?: string },
 ): Promise<void> {
   const present = Object.values(run.characters).filter((c) => c.present)
   if (!present.length) return
@@ -450,6 +452,7 @@ export async function synthesizeDemeanor(
     reasoning: { source: 'off' },
     signal: opts.signal,
     userId: opts.userId,
+    ...(opts.connectionId ? { connection_id: opts.connectionId } : {}),
   })) as { content?: string }
 
   const parsed = extractJson(res.content ?? '') as Record<string, unknown> | null

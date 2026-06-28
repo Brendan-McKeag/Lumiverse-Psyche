@@ -878,7 +878,8 @@ async function seedRun(run, primary, cardContext, opts) {
     parameters: { temperature: 1 },
     reasoning: { source: "off" },
     signal: opts.signal,
-    userId: opts.userId
+    userId: opts.userId,
+    ...opts.connectionId ? { connection_id: opts.connectionId } : {}
   });
   const parsed = extractJson(res.content ?? "");
   backfillEmotions(primary);
@@ -1045,7 +1046,8 @@ async function runPsycheAgent(run, transcript, cardContext, opts) {
       parameters: { temperature: 0.6 },
       reasoning: { source: "off" },
       signal: opts.signal,
-      userId: opts.userId
+      userId: opts.userId,
+      ...opts.connectionId ? { connection_id: opts.connectionId } : {}
     });
     const calls = res.tool_calls ?? [];
     if (calls.length === 0) {
@@ -1135,7 +1137,8 @@ async function synthesizeDemeanor(run, recentScene, opts) {
     parameters: { temperature: 0.7 },
     reasoning: { source: "off" },
     signal: opts.signal,
-    userId: opts.userId
+    userId: opts.userId,
+    ...opts.connectionId ? { connection_id: opts.connectionId } : {}
   });
   const parsed = extractJson(res.content ?? "");
   if (!parsed)
@@ -1163,7 +1166,8 @@ var DEFAULT_CONFIG = {
   maxRounds: 8,
   decayRate: 0.12,
   directive: "",
-  agentTimeoutMs: 90000
+  agentTimeoutMs: 90000,
+  agentConnectionId: ""
 };
 var CONFIG_PATH = "config.json";
 var config = { ...DEFAULT_CONFIG };
@@ -1293,7 +1297,8 @@ async function runAgentForChat(chatId, reply, userId) {
       try {
         seededNote = await seedRun(run, primary, cardContext, {
           signal: AbortSignal.timeout(config.agentTimeoutMs),
-          userId
+          userId,
+          connectionId: config.agentConnectionId || undefined
         });
       } catch (err) {
         const m = err instanceof Error && err.name === "AbortError" ? "timed out" : String(err);
@@ -1314,7 +1319,8 @@ async function runAgentForChat(chatId, reply, userId) {
         maxRounds: config.maxRounds,
         directive: config.directive,
         signal: AbortSignal.timeout(config.agentTimeoutMs),
-        userId
+        userId,
+        connectionId: config.agentConnectionId || undefined
       });
     } catch (err) {
       const m = err instanceof Error && err.name === "AbortError" ? "timed out" : String(err);
@@ -1324,7 +1330,8 @@ async function runAgentForChat(chatId, reply, userId) {
     try {
       await synthesizeDemeanor(run, transcript.slice(-4000), {
         signal: AbortSignal.timeout(config.agentTimeoutMs),
-        userId
+        userId,
+        connectionId: config.agentConnectionId || undefined
       });
     } catch (err) {
       spindle.log.error(`[psyche] demeanor synthesis failed: ${String(err)}`);
@@ -1495,11 +1502,23 @@ spindle.onFrontendMessage(async (payload, userId) => {
           maxRounds: clampInt(payload.config?.maxRounds ?? config.maxRounds, 1, 20),
           decayRate: clampFloat(payload.config?.decayRate ?? config.decayRate, 0, 1),
           directive: String(payload.config?.directive ?? config.directive),
-          agentTimeoutMs: clampInt(payload.config?.agentTimeoutMs ?? config.agentTimeoutMs, 1e4, 300000)
+          agentTimeoutMs: clampInt(payload.config?.agentTimeoutMs ?? config.agentTimeoutMs, 1e4, 300000),
+          agentConnectionId: payload.config?.agentConnectionId === undefined ? config.agentConnectionId : String(payload.config.agentConnectionId ?? "")
         };
         await saveConfig();
         spindle.sendToFrontend({ type: "config", config }, userId);
         break;
+      case "get_connections": {
+        let connections = [];
+        try {
+          const list = await spindle.connections.list(userId);
+          connections = list.map((c) => ({ id: c.id, name: c.name, provider: c.provider, model: c.model }));
+        } catch (err) {
+          spindle.log.warn(`[psyche] could not list connections: ${String(err)}`);
+        }
+        spindle.sendToFrontend({ type: "connections", connections }, userId);
+        break;
+      }
       case "get_state": {
         const chatId = await activeChatId(payload.chatId, userId);
         await sendState(chatId, userId);
@@ -1518,7 +1537,10 @@ spindle.onFrontendMessage(async (payload, userId) => {
         primary.emotions = newCharacter(primary.id, primary.name, true).emotions;
         primary.sheet = {};
         const fullChar = await spindle.characters.get(char.id, userId).catch(() => null);
-        const note = await seedRun(run, primary, buildCardContext(fullChar), { userId });
+        const note = await seedRun(run, primary, buildCardContext(fullChar), {
+          userId,
+          connectionId: config.agentConnectionId || undefined
+        });
         run.seeded = true;
         await saveRun(run);
         await sendState(chatId, userId, `Rerolled \u2014 ${note}`);

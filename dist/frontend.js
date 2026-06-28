@@ -97,6 +97,7 @@ function setup(ctx) {
         <div><span class="ps-muted">Engine rounds per turn</span><input type="number" class="ps-input ps-rounds" min="1" max="20" /></div>
         <div><span class="ps-muted">Decay rate (0–1, relax toward baseline)</span><input type="number" class="ps-input ps-decay" min="0" max="1" step="0.01" /></div>
         <div><span class="ps-muted">Engine directive (optional)</span><textarea class="ps-ta ps-dir" placeholder="e.g. Slow-burn; keep characters guarded until trust is earned."></textarea></div>
+        <div><span class="ps-muted">Engine model (separate connection for Psyche's bookkeeping)</span><select class="ps-input ps-conn"><option value="">Same as the prose model</option></select></div>
         <div class="ps-row"><button class="ps-btn ps-save-cfg">Save settings</button></div>
       </div>
     </div>
@@ -122,6 +123,9 @@ function setup(ctx) {
   const roundsEl = q(".ps-rounds");
   const decayEl = q(".ps-decay");
   const dirEl = q(".ps-dir");
+  const connEl = q(".ps-conn");
+  let connOptions = [];
+  let agentConnId = "";
   const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
   const selected = () => snap?.characters.find((c) => c.id === selectedId) ?? snap?.characters[0] ?? null;
   function renderChips() {
@@ -213,7 +217,20 @@ function setup(ctx) {
     const { characterId } = ctx.getActiveChat();
     ctx.sendToBackend({ type: "get_state" });
   };
+  function renderConnections() {
+    const opts = ['<option value="">Same as the prose model</option>'];
+    for (const c of connOptions) {
+      const label = `${c.name} — ${c.provider}/${c.model}`;
+      opts.push(`<option value="${esc(c.id)}"${c.id === agentConnId ? " selected" : ""}>${esc(label)}</option>`);
+    }
+    if (agentConnId && !connOptions.some((c) => c.id === agentConnId)) {
+      opts.push(`<option value="${esc(agentConnId)}" selected>(saved connection ${esc(agentConnId)})</option>`);
+    }
+    connEl.innerHTML = opts.join("");
+    connEl.value = agentConnId;
+  }
   ctx.sendToBackend({ type: "get_config" });
+  ctx.sendToBackend({ type: "get_connections" });
   requestState();
   tab.onActivate(requestState);
   ctx.events.on("CHAT_SWITCHED", () => {
@@ -276,7 +293,8 @@ function setup(ctx) {
         enabled: enEl.checked,
         maxRounds: Number(roundsEl.value),
         decayRate: Number(decayEl.value),
-        directive: dirEl.value
+        directive: dirEl.value,
+        agentConnectionId: connEl.value
       }
     });
   });
@@ -305,6 +323,13 @@ function setup(ctx) {
         roundsEl.value = String(c.maxRounds ?? 8);
         decayEl.value = String(c.decayRate ?? 0.12);
         dirEl.value = c.directive ?? "";
+        agentConnId = c.agentConnectionId ?? "";
+        renderConnections();
+        break;
+      }
+      case "connections": {
+        connOptions = Array.isArray(p.connections) ? p.connections : [];
+        renderConnections();
         break;
       }
     }

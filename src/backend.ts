@@ -38,6 +38,8 @@ interface Config {
   decayRate: number
   directive: string
   agentTimeoutMs: number
+  /** connection id the out-of-band engine calls use; '' = same as the prose model */
+  agentConnectionId: string
 }
 
 const DEFAULT_CONFIG: Config = {
@@ -46,6 +48,7 @@ const DEFAULT_CONFIG: Config = {
   decayRate: 0.12,
   directive: '',
   agentTimeoutMs: 90000,
+  agentConnectionId: '',
 }
 const CONFIG_PATH = 'config.json'
 
@@ -189,6 +192,7 @@ async function runAgentForChat(chatId: string, reply: string, userId?: string) {
         seededNote = await seedRun(run, primary, cardContext, {
           signal: AbortSignal.timeout(config.agentTimeoutMs),
           userId,
+          connectionId: config.agentConnectionId || undefined,
         })
       } catch (err) {
         const m = err instanceof Error && err.name === 'AbortError' ? 'timed out' : String(err)
@@ -211,6 +215,7 @@ async function runAgentForChat(chatId: string, reply: string, userId?: string) {
         directive: config.directive,
         signal: AbortSignal.timeout(config.agentTimeoutMs),
         userId,
+        connectionId: config.agentConnectionId || undefined,
       })
     } catch (err) {
       const m = err instanceof Error && err.name === 'AbortError' ? 'timed out' : String(err)
@@ -223,6 +228,7 @@ async function runAgentForChat(chatId: string, reply: string, userId?: string) {
       await synthesizeDemeanor(run, transcript.slice(-4000), {
         signal: AbortSignal.timeout(config.agentTimeoutMs),
         userId,
+        connectionId: config.agentConnectionId || undefined,
       })
     } catch (err) {
       spindle.log.error(`[psyche] demeanor synthesis failed: ${String(err)}`)
@@ -433,10 +439,28 @@ spindle.onFrontendMessage(async (payload: any, userId) => {
         decayRate: clampFloat(payload.config?.decayRate ?? config.decayRate, 0, 1),
         directive: String(payload.config?.directive ?? config.directive),
         agentTimeoutMs: clampInt(payload.config?.agentTimeoutMs ?? config.agentTimeoutMs, 10000, 300000),
+        agentConnectionId:
+          payload.config?.agentConnectionId === undefined
+            ? config.agentConnectionId
+            : String(payload.config.agentConnectionId ?? ''),
       }
       await saveConfig()
       spindle.sendToFrontend({ type: 'config', config }, userId)
       break
+
+    case 'get_connections': {
+      // The available connection profiles, so the panel can route the engine to
+      // a different model than the one writing the prose.
+      let connections: { id: string; name: string; provider: string; model: string }[] = []
+      try {
+        const list = await spindle.connections.list(userId)
+        connections = list.map((c) => ({ id: c.id, name: c.name, provider: c.provider, model: c.model }))
+      } catch (err) {
+        spindle.log.warn(`[psyche] could not list connections: ${String(err)}`)
+      }
+      spindle.sendToFrontend({ type: 'connections', connections }, userId)
+      break
+    }
 
     case 'get_state': {
       const chatId = await activeChatId(payload.chatId, userId)
@@ -457,7 +481,10 @@ spindle.onFrontendMessage(async (payload: any, userId) => {
       primary.emotions = newCharacter(primary.id, primary.name, true).emotions
       primary.sheet = {}
       const fullChar = await spindle.characters.get(char.id, userId).catch(() => null)
-      const note = await seedRun(run, primary, buildCardContext(fullChar), { userId })
+      const note = await seedRun(run, primary, buildCardContext(fullChar), {
+        userId,
+        connectionId: config.agentConnectionId || undefined,
+      })
       run.seeded = true
       await saveRun(run)
       await sendState(chatId, userId, `Rerolled — ${note}`)
