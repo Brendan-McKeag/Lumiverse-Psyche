@@ -1,4 +1,5 @@
 declare const spindle: import('lumiverse-spindle-types').SpindleAPI
+type LlmMessage = import('lumiverse-spindle-types').LlmMessageDTO
 
 import {
   RunState,
@@ -8,11 +9,9 @@ import {
   newCharacter,
   backfillEmotions,
   buildDirective,
-  ensureInjectionEntry,
-  isInjectionEntry,
   slugify,
 } from './run'
-import { seedRun, runPsycheAgent } from './agent'
+import { seedRun, runPsycheAgent, AGENT_SENTINEL } from './agent'
 import {
   EMOTIONS,
   EMOTION_BY_KEY,
@@ -196,7 +195,6 @@ async function runAgentForChat(chatId: string, reply: string, userId?: string) {
         if (!primary.identity) primary.identity = cardContext.slice(0, 1200)
       }
       run.seeded = true
-      await ensureInjectionEntry(char.id, char.name, userId)
       await saveRun(run) // <- seed is now durable no matter what happens next
       spindle.log.info(`[psyche] ${char.name}: seeded — ${seededNote}`)
     } else {
@@ -219,7 +217,6 @@ async function runAgentForChat(chatId: string, reply: string, userId?: string) {
       spindle.log.error(`[psyche] ${char.name}: update pass failed — ${m}`)
     }
 
-    await ensureInjectionEntry(char.id, char.name, userId)
     await saveRun(run)
 
     spindle.sendToFrontend({
@@ -268,7 +265,11 @@ spindle.on('GENERATION_ENDED', async (payload, userId) => {
   const chatId = payload.chatId
   if (payload.error) return dropObserver(chatId)
   const gt = payload.generationType
-  if (gt === 'impersonate' || gt === 'quiet') return dropObserver(chatId)
+  // Only advance the mind on a genuinely NEW assistant turn. Swipes, regens,
+  // continues and impersonations re-roll an existing turn — re-running the
+  // engine on those would double-count emotional impact and clobber any manual
+  // edits the operator made to test a regeneration. (Absent type == normal.)
+  if (gt && gt !== 'normal') return dropObserver(chatId)
   const obs = observers.get(chatId)
   const reply = (payload.content ?? obs?.content ?? '').trim()
   dropObserver(chatId)
@@ -284,62 +285,59 @@ spindle.on('GENERATION_STOPPED', async (payload, userId) => {
 })
 
 /* ----------------------- live state injection ---------------------- *
- * Fires before world-info activation. While the extension is enabled, find our
- * disabled-at-rest injection entry in the candidate set and FORCE it, overriding
- * its content with the live emotional directive for THIS chat's run. When the
- * extension is off this never runs, the entry stays disabled, and the prompt is
- * completely normal.
+ * The live emotional state reaches the visible reply by APPENDING a system
+ * message to the assembled prompt, via a pre-generation prompt interceptor.
+ * This is direct and mechanism-free: no world-book entry, no disabled flag, no
+ * `mutated` content-override to depend on — whatever buildDirective() produces
+ * is exactly what the model sees, so editing a value changes the next reply.
  *
- * Registration is unconditional at boot (it requires the `generation`
- * permission; if that isn't granted yet the host ignores the registration and
- * it takes effect after the worker reloads on grant — same as any WI extension).
+ * We skip our own out-of-band seed/update generations (they carry the agent
+ * sentinel) and pass everything through untouched when the panel toggle is off.
+ * The chat is resolved from the interceptor context when present, else from the
+ * user's active chat (this is a user-scoped extension).
  * ------------------------------------------------------------------ */
 
-// One-time diagnostics so it is obvious from the logs whether state actually
-// reaches the prompt, without spamming every generation.
+// One-time diagnostics so it is obvious from the logs whether state reaches the
+// prompt, without spamming every generation.
 let loggedInject = false
-let loggedMissing = false
 
-async function injectionInterceptor(ctx: import('lumiverse-spindle-types').WorldInfoInterceptorCtxDTO) {
-  if (!config.enabled || !ctx.chatId) return
-
-  let run: RunState
+async function promptInjector(messages: LlmMessage[], context: unknown): Promise<LlmMessage[]> {
   try {
-    run = await loadRun(ctx.chatId)
-  } catch {
-    return
-  }
-  const directive = buildDirective(run)
-  if (!directive) return // nothing seeded/present -> inject nothing
-
-  const entry = ctx.entries.find((e) => isInjectionEntry(e.extensions))
-  if (!entry) {
-    if (!loggedMissing) {
-      loggedMissing = true
-      spindle.log.warn(
-        `[psyche] have state for chat ${ctx.chatId} but no injection entry among ${ctx.entries.length} candidates — the Psyche book may be detached from the character; injection skipped`,
-      )
+    if (!config.enabled) return messages
+    // Never inject into Psyche's own seed/update agent calls.
+    for (const m of messages) {
+      if (typeof m.content === 'string' && m.content.includes(AGENT_SENTINEL)) return messages
     }
-    return
-  }
 
-  if (!loggedInject) {
-    loggedInject = true
-    spindle.log.info(`[psyche] injecting emotional state (${directive.length} chars) into chat ${ctx.chatId}`)
-  }
-  // enabled clears the disabled-at-rest flag; forced injects it unconditionally
-  // (its keyword never matches); mutated overrides the placeholder with live state.
-  return {
-    enabled: [entry.id],
-    forced: [entry.id],
-    mutated: [{ id: entry.id, content: directive }],
+    const cx = context as { chatId?: string } | undefined
+    let chatId = typeof cx?.chatId === 'string' ? cx.chatId : undefined
+    if (!chatId) {
+      const active = await spindle.chats.getActive().catch(() => null)
+      chatId = active?.id
+    }
+    if (!chatId) return messages
+
+    const run = await loadRun(chatId).catch(() => null)
+    if (!run) return messages
+    const directive = buildDirective(run)
+    if (!directive) return messages
+
+    if (!loggedInject) {
+      loggedInject = true
+      spindle.log.info(`[psyche] injecting emotional state (${directive.length} chars) into chat ${chatId}`)
+    }
+    // Append as a trailing system instruction — late position = high salience.
+    return [...messages, { role: 'system', content: directive }]
+  } catch (err) {
+    spindle.log.error(`[psyche] injection error: ${String(err)}`)
+    return messages
   }
 }
 
 function registerInjectionInterceptor() {
   try {
-    spindle.registerWorldInfoInterceptor(injectionInterceptor, 50)
-    spindle.log.info('[psyche] injection interceptor registered')
+    spindle.registerInterceptor(promptInjector, 50)
+    spindle.log.info('[psyche] prompt interceptor registered')
   } catch (err) {
     spindle.log.warn(`[psyche] interceptor registration failed: ${String(err)}`)
   }
@@ -450,7 +448,6 @@ spindle.onFrontendMessage(async (payload: any, userId) => {
       const fullChar = await spindle.characters.get(char.id, userId).catch(() => null)
       const note = await seedRun(run, primary, buildCardContext(fullChar), { userId })
       run.seeded = true
-      await ensureInjectionEntry(char.id, char.name, userId)
       await saveRun(run)
       await sendState(chatId, userId, `Rerolled — ${note}`)
       break

@@ -247,48 +247,6 @@ function buildDirective(run) {
   ].join(`
 `);
 }
-var PSYCHE_EXT = "psyche";
-var injectMetaPath = (cid) => `inject/${cid}.json`;
-function isInjectionEntry(extensions) {
-  const wf = extensions?.[PSYCHE_EXT];
-  return Boolean(wf?.inject);
-}
-async function ensureInjectionEntry(characterId, characterName, userId) {
-  try {
-    const meta = await spindle.storage.getJson(injectMetaPath(characterId), {
-      fallback: null
-    });
-    if (meta?.entryId) {
-      const entry2 = await spindle.world_books.entries.get(meta.entryId, userId).catch(() => null);
-      if (entry2)
-        return meta.entryId;
-    }
-    const book = await spindle.world_books.create({
-      name: `${characterName || "Character"} \u2014 Psyche`,
-      description: "Live emotional state injected by the Psyche extension. Managed automatically.",
-      metadata: { psyche: true }
-    }, userId);
-    const entry = await spindle.world_books.entries.create(book.id, {
-      comment: "[Psyche] live emotional state",
-      content: "(emotional state will appear here while Psyche is active)",
-      key: ["__psyche_state__"],
-      disabled: true,
-      constant: false,
-      extensions: { [PSYCHE_EXT]: { inject: true } }
-    }, userId);
-    const char = await spindle.characters.get(characterId, userId).catch(() => null);
-    const current = char?.world_book_ids ?? [];
-    if (!current.includes(book.id)) {
-      await spindle.characters.update(characterId, { world_book_ids: [...current, book.id] }, userId);
-    }
-    await spindle.storage.setJson(injectMetaPath(characterId), { bookId: book.id, entryId: entry.id });
-    spindle.log.info(`[psyche] provisioned injection entry ${entry.id} for character ${characterId}`);
-    return entry.id;
-  } catch (err) {
-    spindle.log.error(`[psyche] ensureInjectionEntry failed: ${String(err)}`);
-    return null;
-  }
-}
 
 // src/tools.ts
 var str = (a, k, d = "") => typeof a[k] === "string" ? a[k] : d;
@@ -1037,7 +995,6 @@ async function runAgentForChat(chatId, reply, userId) {
           primary.identity = cardContext.slice(0, 1200);
       }
       run.seeded = true;
-      await ensureInjectionEntry(char.id, char.name, userId);
       await saveRun(run);
       spindle.log.info(`[psyche] ${char.name}: seeded \u2014 ${seededNote}`);
     } else {
@@ -1057,7 +1014,6 @@ async function runAgentForChat(chatId, reply, userId) {
       result.finalNote = `update failed (${m})`;
       spindle.log.error(`[psyche] ${char.name}: update pass failed \u2014 ${m}`);
     }
-    await ensureInjectionEntry(char.id, char.name, userId);
     await saveRun(run);
     spindle.sendToFrontend({
       type: "state_changed",
@@ -1101,7 +1057,7 @@ spindle.on("GENERATION_ENDED", async (payload, userId) => {
   if (payload.error)
     return dropObserver(chatId);
   const gt = payload.generationType;
-  if (gt === "impersonate" || gt === "quiet")
+  if (gt && gt !== "normal")
     return dropObserver(chatId);
   const obs = observers.get(chatId);
   const reply = (payload.content ?? obs?.content ?? "").trim();
@@ -1117,41 +1073,42 @@ spindle.on("GENERATION_STOPPED", async (payload, userId) => {
   await runAgentForChat(payload.chatId, reply, userId);
 });
 var loggedInject = false;
-var loggedMissing = false;
-async function injectionInterceptor(ctx) {
-  if (!config.enabled || !ctx.chatId)
-    return;
-  let run;
+async function promptInjector(messages, context) {
   try {
-    run = await loadRun(ctx.chatId);
-  } catch {
-    return;
-  }
-  const directive = buildDirective(run);
-  if (!directive)
-    return;
-  const entry = ctx.entries.find((e) => isInjectionEntry(e.extensions));
-  if (!entry) {
-    if (!loggedMissing) {
-      loggedMissing = true;
-      spindle.log.warn(`[psyche] have state for chat ${ctx.chatId} but no injection entry among ${ctx.entries.length} candidates \u2014 the Psyche book may be detached from the character; injection skipped`);
+    if (!config.enabled)
+      return messages;
+    for (const m of messages) {
+      if (typeof m.content === "string" && m.content.includes(AGENT_SENTINEL))
+        return messages;
     }
-    return;
+    const cx = context;
+    let chatId = typeof cx?.chatId === "string" ? cx.chatId : undefined;
+    if (!chatId) {
+      const active = await spindle.chats.getActive().catch(() => null);
+      chatId = active?.id;
+    }
+    if (!chatId)
+      return messages;
+    const run = await loadRun(chatId).catch(() => null);
+    if (!run)
+      return messages;
+    const directive = buildDirective(run);
+    if (!directive)
+      return messages;
+    if (!loggedInject) {
+      loggedInject = true;
+      spindle.log.info(`[psyche] injecting emotional state (${directive.length} chars) into chat ${chatId}`);
+    }
+    return [...messages, { role: "system", content: directive }];
+  } catch (err) {
+    spindle.log.error(`[psyche] injection error: ${String(err)}`);
+    return messages;
   }
-  if (!loggedInject) {
-    loggedInject = true;
-    spindle.log.info(`[psyche] injecting emotional state (${directive.length} chars) into chat ${ctx.chatId}`);
-  }
-  return {
-    enabled: [entry.id],
-    forced: [entry.id],
-    mutated: [{ id: entry.id, content: directive }]
-  };
 }
 function registerInjectionInterceptor() {
   try {
-    spindle.registerWorldInfoInterceptor(injectionInterceptor, 50);
-    spindle.log.info("[psyche] injection interceptor registered");
+    spindle.registerInterceptor(promptInjector, 50);
+    spindle.log.info("[psyche] prompt interceptor registered");
   } catch (err) {
     spindle.log.warn(`[psyche] interceptor registration failed: ${String(err)}`);
   }
@@ -1249,7 +1206,6 @@ spindle.onFrontendMessage(async (payload, userId) => {
         const fullChar = await spindle.characters.get(char.id, userId).catch(() => null);
         const note = await seedRun(run, primary, buildCardContext(fullChar), { userId });
         run.seeded = true;
-        await ensureInjectionEntry(char.id, char.name, userId);
         await saveRun(run);
         await sendState(chatId, userId, `Rerolled \u2014 ${note}`);
         break;
