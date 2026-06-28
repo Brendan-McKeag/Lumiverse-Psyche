@@ -198,9 +198,7 @@ async function runAgentForChat(chatId: string, reply: string, userId?: string) {
   if (!config.enabled || !reply.trim()) return
   const char = await characterForChat(chatId, userId)
   if (!char) return
-  if (running.has(chatId)) return
 
-  running.add(chatId)
   const dbg: DebugBundle = {}
   try {
     const run = await loadRun(chatId)
@@ -297,6 +295,37 @@ async function runAgentForChat(chatId: string, reply: string, userId?: string) {
   } catch (err) {
     const msg = err instanceof Error && err.name === 'AbortError' ? 'engine timed out' : String(err)
     spindle.log.error(`[psyche] engine failed: ${msg}`)
+  }
+}
+
+/* ----------------------- run scheduler ----------------------------- *
+ * The engine pass (mind-update tool loop + rumination) takes far longer than a
+ * single reply, so turns can pile up. Never drop them: while a chat's pass is
+ * running, remember only the LATEST turn; when the pass finishes, run once more
+ * on it. Because the update agent reads the WHOLE transcript each time, one
+ * catch-up pass reflects every intervening turn — we coalesce, we don't lose.
+ * ------------------------------------------------------------------ */
+const pending = new Map<string, { reply: string; userId?: string }>()
+
+function scheduleAgent(chatId: string, reply: string, userId?: string) {
+  if (!config.enabled || !reply.trim()) return
+  if (running.has(chatId)) {
+    pending.set(chatId, { reply, userId }) // coalesce — keep only the newest
+    spindle.log.info(`[psyche] engine busy for chat ${chatId}; queued latest turn`)
+    return
+  }
+  void runAgentLoop(chatId, reply, userId)
+}
+
+async function runAgentLoop(chatId: string, reply: string, userId?: string) {
+  running.add(chatId)
+  try {
+    await runAgentForChat(chatId, reply, userId)
+    while (pending.has(chatId)) {
+      const next = pending.get(chatId)!
+      pending.delete(chatId)
+      await runAgentForChat(chatId, next.reply, next.userId)
+    }
   } finally {
     running.delete(chatId)
   }
@@ -335,7 +364,7 @@ spindle.on('GENERATION_ENDED', async (payload, userId) => {
   const obs = observers.get(chatId)
   const reply = (payload.content ?? obs?.content ?? '').trim()
   dropObserver(chatId)
-  await runAgentForChat(chatId, reply, userId)
+  scheduleAgent(chatId, reply, userId)
 })
 
 spindle.on('GENERATION_STOPPED', async (payload, userId) => {
@@ -343,7 +372,7 @@ spindle.on('GENERATION_STOPPED', async (payload, userId) => {
   const obs = observers.get(payload.chatId)
   const reply = (payload.content ?? obs?.content ?? '').trim()
   dropObserver(payload.chatId)
-  await runAgentForChat(payload.chatId, reply, userId)
+  scheduleAgent(payload.chatId, reply, userId)
 })
 
 /* ----------------------- live state injection ---------------------- *

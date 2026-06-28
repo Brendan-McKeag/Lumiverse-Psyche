@@ -1416,9 +1416,6 @@ async function runAgentForChat(chatId, reply, userId) {
   const char = await characterForChat(chatId, userId);
   if (!char)
     return;
-  if (running.has(chatId))
-    return;
-  running.add(chatId);
   const dbg = {};
   try {
     const run = await loadRun(chatId);
@@ -1496,6 +1493,28 @@ async function runAgentForChat(chatId, reply, userId) {
   } catch (err) {
     const msg = err instanceof Error && err.name === "AbortError" ? "engine timed out" : String(err);
     spindle.log.error(`[psyche] engine failed: ${msg}`);
+  }
+}
+var pending = new Map;
+function scheduleAgent(chatId, reply, userId) {
+  if (!config.enabled || !reply.trim())
+    return;
+  if (running.has(chatId)) {
+    pending.set(chatId, { reply, userId });
+    spindle.log.info(`[psyche] engine busy for chat ${chatId}; queued latest turn`);
+    return;
+  }
+  runAgentLoop(chatId, reply, userId);
+}
+async function runAgentLoop(chatId, reply, userId) {
+  running.add(chatId);
+  try {
+    await runAgentForChat(chatId, reply, userId);
+    while (pending.has(chatId)) {
+      const next = pending.get(chatId);
+      pending.delete(chatId);
+      await runAgentForChat(chatId, next.reply, next.userId);
+    }
   } finally {
     running.delete(chatId);
   }
@@ -1531,7 +1550,7 @@ spindle.on("GENERATION_ENDED", async (payload, userId) => {
   const obs = observers.get(chatId);
   const reply = (payload.content ?? obs?.content ?? "").trim();
   dropObserver(chatId);
-  await runAgentForChat(chatId, reply, userId);
+  scheduleAgent(chatId, reply, userId);
 });
 spindle.on("GENERATION_STOPPED", async (payload, userId) => {
   if (!config.enabled || !payload.chatId)
@@ -1539,7 +1558,7 @@ spindle.on("GENERATION_STOPPED", async (payload, userId) => {
   const obs = observers.get(payload.chatId);
   const reply = (payload.content ?? obs?.content ?? "").trim();
   dropObserver(payload.chatId);
-  await runAgentForChat(payload.chatId, reply, userId);
+  scheduleAgent(payload.chatId, reply, userId);
 });
 var loggedInject = false;
 async function refreshInjection(chatId, userId) {
