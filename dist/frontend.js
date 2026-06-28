@@ -17,8 +17,10 @@ function setup(ctx) {
     .ps-section { border-top:1px solid var(--lumiverse-border); padding-top:10px; display:flex; flex-direction:column; gap:8px; }
     .ps-input,.ps-ta { width:100%; padding:6px 8px; font-size:12px; background:var(--lumiverse-fill); color:var(--lumiverse-text); border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius); box-sizing:border-box; }
     .ps-ta { min-height:70px; resize:vertical; font-family:inherit; }
-    .ps-emo { display:grid; grid-template-columns:96px 1fr 78px; align-items:center; gap:8px; margin:2px 0; }
+    .ps-emo { display:grid; grid-template-columns:84px 1fr 48px 60px; align-items:center; gap:6px; margin:2px 0; }
     .ps-emo .nm { font-size:11px; }
+    .ps-eval { width:100%; padding:2px 3px; font-size:10.5px; text-align:right; background:var(--lumiverse-fill); color:var(--lumiverse-text); border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius); box-sizing:border-box; }
+    .ps-eval:focus { border-color:var(--lumiverse-accent,#6c8cff); outline:none; }
     .ps-track { position:relative; height:8px; border-radius:6px; background:var(--lumiverse-fill-subtle,#2a2a33); overflow:hidden; }
     .ps-fill { position:absolute; top:0; bottom:0; background:var(--lumiverse-accent,#6c8cff); border-radius:6px; }
     .ps-fill.hot { background:#e0683c; }
@@ -126,8 +128,8 @@ function setup(ctx) {
       const w = Math.min(100, Math.max(0, e.value * 100));
       bar = `<div class="ps-track"><div class="ps-fill ${e.value >= 0.8 ? "hot" : ""}" style="left:0;width:${w}%"></div></div>`;
     }
-    const valTxt = e.kind === "bipolar" ? e.value.toFixed(2) : e.value.toFixed(2);
-    return `<div class="ps-emo"><span class="nm" title="${esc(e.label)}">${esc(e.label.split(" (")[0])}</span>${bar}<span class="ps-val">${valTxt} ${esc(e.descriptor)}</span></div>`;
+    const min = e.kind === "bipolar" ? -1 : 0;
+    return `<div class="ps-emo">` + `<span class="nm" title="${esc(e.label)}">${esc(e.label.split(" (")[0])}</span>` + bar + `<input class="ps-eval" type="number" data-key="${e.key}" value="${e.value.toFixed(2)}" ` + `min="${min}" max="1" step="0.01" title="${esc(e.label)} — type a new value (${min}…1)" />` + `<span class="ps-val" title="${esc(e.descriptor)}">${esc(e.descriptor)}</span>` + `</div>`;
   }
   function renderDetail() {
     const c = selected();
@@ -143,8 +145,17 @@ function setup(ctx) {
     presentEl.checked = c.present;
     personaEl.value = c.persona;
     const bip = c.emotions.filter((e) => e.kind === "bipolar");
-    const uni = c.emotions.filter((e) => e.kind === "unipolar").sort((a, b) => b.value - a.value);
+    const uni = c.emotions.filter((e) => e.kind === "unipolar");
     emosEl.innerHTML = [...bip, ...uni].map(emotionRow).join("");
+    emosEl.querySelectorAll(".ps-eval").forEach((el) => {
+      const inp = el;
+      inp.addEventListener("change", () => {
+        const v = Number(inp.value);
+        if (!Number.isFinite(v))
+          return;
+        ctx.sendToBackend({ type: "set_emotion", characterId: c.id, emotion: inp.dataset.key, value: v });
+      });
+    });
     const sections = Object.entries(c.sheet);
     sheetEl.innerHTML = sections.length ? sections.map(([k, v]) => `<div class="sk">${esc(k)}</div><textarea class="ps-ta ps-sec" data-sec="${esc(k)}">${esc(v)}</textarea>`).join("") : '<span class="ps-muted">No sheet sections yet — the engine writes these as the story develops.</span>';
     sheetEl.querySelectorAll(".ps-sec").forEach((el) => {
