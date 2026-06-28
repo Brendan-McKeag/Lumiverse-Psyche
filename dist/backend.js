@@ -1424,6 +1424,7 @@ async function runAgentForChat(chatId, reply, userId) {
     const cardContext = buildCardContext(fullChar);
     let seededNote = "";
     if (!run.seeded) {
+      emitEngine(chatId, "running", "seeding character", userId);
       try {
         seededNote = await seedRun(run, primary, cardContext, {
           signal: AbortSignal.timeout(config.agentTimeoutMs),
@@ -1444,6 +1445,7 @@ async function runAgentForChat(chatId, reply, userId) {
       applyDecay(run);
     }
     const transcript = await buildTranscript(chatId, reply);
+    emitEngine(chatId, "running", "updating emotions & canon", userId);
     let result = { rounds: 0, toolCalls: [], finalNote: "" };
     try {
       result = await runPsycheAgent(run, transcript, cardContext, {
@@ -1459,6 +1461,7 @@ async function runAgentForChat(chatId, reply, userId) {
       result.finalNote = `update failed (${m})`;
       spindle.log.error(`[psyche] ${char.name}: update pass failed \u2014 ${m}`);
     }
+    emitEngine(chatId, "running", "ruminating", userId);
     try {
       await ruminate(run, transcript.slice(-6000), {
         signal: AbortSignal.timeout(config.agentTimeoutMs),
@@ -1496,18 +1499,23 @@ async function runAgentForChat(chatId, reply, userId) {
   }
 }
 var pending = new Map;
+function emitEngine(chatId, state, stage, userId) {
+  spindle.sendToFrontend({ type: "engine", chatId, state, stage, queued: pending.has(chatId) }, userId);
+}
 function scheduleAgent(chatId, reply, userId) {
   if (!config.enabled || !reply.trim())
     return;
   if (running.has(chatId)) {
     pending.set(chatId, { reply, userId });
     spindle.log.info(`[psyche] engine busy for chat ${chatId}; queued latest turn`);
+    emitEngine(chatId, "running", "queued another turn", userId);
     return;
   }
   runAgentLoop(chatId, reply, userId);
 }
 async function runAgentLoop(chatId, reply, userId) {
   running.add(chatId);
+  emitEngine(chatId, "running", "starting", userId);
   try {
     await runAgentForChat(chatId, reply, userId);
     while (pending.has(chatId)) {
@@ -1517,6 +1525,7 @@ async function runAgentLoop(chatId, reply, userId) {
     }
   } finally {
     running.delete(chatId);
+    emitEngine(chatId, "idle", undefined, userId);
   }
 }
 function ensureObserver(chatId) {
@@ -1693,6 +1702,11 @@ spindle.onFrontendMessage(async (payload, userId) => {
         const chatId = await activeChatId(payload.chatId, userId);
         const debug = chatId ? await loadDebug(chatId) : {};
         spindle.sendToFrontend({ type: "debug", debug }, userId);
+        break;
+      }
+      case "get_engine": {
+        const chatId = await activeChatId(payload.chatId, userId);
+        spindle.sendToFrontend({ type: "engine", chatId, state: chatId && running.has(chatId) ? "running" : "idle" }, userId);
         break;
       }
       case "reseed": {

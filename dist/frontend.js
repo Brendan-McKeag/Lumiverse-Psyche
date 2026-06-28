@@ -33,6 +33,9 @@ function setup(ctx) {
     .ps-intent { font-size:11.5px; color:var(--lumiverse-accent,#6c8cff); padding:2px 2px; }
     .ps-btn.sel { border-color:var(--lumiverse-accent,#6c8cff); color:var(--lumiverse-accent,#6c8cff); }
     .ps-pre { white-space:pre-wrap; word-break:break-word; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:10.5px; line-height:1.4; max-height:360px; overflow:auto; padding:8px; background:var(--lumiverse-fill-subtle); border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius); }
+    .ps-engine { font-size:12px; font-weight:600; padding:6px 10px; border-radius:var(--lumiverse-radius); border:1px solid var(--lumiverse-border); text-align:center; }
+    .ps-engine.run { color:#e0a23c; border-color:#e0a23c; background:rgba(224,162,60,0.10); }
+    .ps-engine.idle { color:#4fbf67; border-color:#4fbf67; background:rgba(79,191,103,0.07); }
   `);
   const tab = ctx.ui.registerDrawerTab({
     id: "psyche",
@@ -45,6 +48,7 @@ function setup(ctx) {
   });
   tab.root.innerHTML = `
     <div class="ps-wrap">
+      <div class="ps-engine idle">● idle</div>
       <div class="ps-row between">
         <span class="ps-muted ps-status">Loading…</span>
         <button class="ps-btn ps-refresh">Refresh</button>
@@ -145,6 +149,7 @@ function setup(ctx) {
   const dbgMeta = q(".ps-dbg-meta");
   let debugData = {};
   let dbgKey = "injection";
+  const engineEl = q(".ps-engine");
   const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
   const selected = () => snap?.characters.find((c) => c.id === selectedId) ?? snap?.characters[0] ?? null;
   function renderChips() {
@@ -272,18 +277,28 @@ ${t.request}
 ${t.response}`;
   }
   const requestDebug = () => ctx.sendToBackend({ type: "get_debug" });
+  const requestEngine = () => ctx.sendToBackend({ type: "get_engine" });
+  function setEngine(state, stage) {
+    const running = state === "running";
+    engineEl.className = `ps-engine ${running ? "run" : "idle"}`;
+    engineEl.textContent = running ? `● Engine working${stage ? " — " + stage : ""}… please wait before replying` : "● Idle — safe to reply";
+    tab.setBadge(running ? "⏳" : null);
+  }
   ctx.sendToBackend({ type: "get_config" });
   ctx.sendToBackend({ type: "get_connections" });
   requestState();
   requestDebug();
+  requestEngine();
   tab.onActivate(() => {
     requestState();
     requestDebug();
+    requestEngine();
   });
   ctx.events.on("CHAT_SWITCHED", () => {
     selectedId = null;
     requestState();
     requestDebug();
+    requestEngine();
   });
   tab.root.querySelectorAll(".ps-dbg").forEach((b) => b.addEventListener("click", () => {
     dbgKey = b.dataset.k;
@@ -365,8 +380,6 @@ ${t.response}`;
       }
       case "state_changed": {
         activity.textContent = `Last turn: ${p.edits} edits over ${p.rounds} rounds${p.note ? ` — ${p.note}` : ""}`;
-        tab.setBadge("•");
-        setTimeout(() => tab.setBadge(null), 4000);
         requestState();
         requestDebug();
         break;
@@ -374,6 +387,12 @@ ${t.response}`;
       case "debug": {
         debugData = p.debug ?? {};
         renderDebug();
+        break;
+      }
+      case "engine": {
+        if (p.chatId && snap?.chatId && p.chatId !== snap.chatId)
+          break;
+        setEngine(p.state, p.stage);
         break;
       }
       case "config": {

@@ -213,6 +213,7 @@ async function runAgentForChat(chatId: string, reply: string, userId?: string) {
     // reseed forever ("generated a seed, but no activity").
     let seededNote = ''
     if (!run.seeded) {
+      emitEngine(chatId, 'running', 'seeding character', userId)
       try {
         seededNote = await seedRun(run, primary, cardContext, {
           signal: AbortSignal.timeout(config.agentTimeoutMs),
@@ -234,6 +235,7 @@ async function runAgentForChat(chatId: string, reply: string, userId?: string) {
 
     // ── per-turn affect + sheet update ───────────────────────────────
     const transcript = await buildTranscript(chatId, reply)
+    emitEngine(chatId, 'running', 'updating emotions & canon', userId)
     let result = { rounds: 0, toolCalls: [] as { tool: string; result: string }[], finalNote: '' }
     try {
       result = await runPsycheAgent(run, transcript, cardContext, {
@@ -252,6 +254,7 @@ async function runAgentForChat(chatId: string, reply: string, userId?: string) {
 
     // Stage 2 — ruminate on how the updated emotional state reshapes behavior,
     // and produce the directive the prose writer will follow next.
+    emitEngine(chatId, 'running', 'ruminating', userId)
     try {
       await ruminate(run, transcript.slice(-6000), {
         signal: AbortSignal.timeout(config.agentTimeoutMs),
@@ -307,11 +310,17 @@ async function runAgentForChat(chatId: string, reply: string, userId?: string) {
  * ------------------------------------------------------------------ */
 const pending = new Map<string, { reply: string; userId?: string }>()
 
+/** Tell the panel whether the engine is working, so the user knows to wait. */
+function emitEngine(chatId: string, state: 'running' | 'idle', stage?: string, userId?: string) {
+  spindle.sendToFrontend({ type: 'engine', chatId, state, stage, queued: pending.has(chatId) }, userId)
+}
+
 function scheduleAgent(chatId: string, reply: string, userId?: string) {
   if (!config.enabled || !reply.trim()) return
   if (running.has(chatId)) {
     pending.set(chatId, { reply, userId }) // coalesce — keep only the newest
     spindle.log.info(`[psyche] engine busy for chat ${chatId}; queued latest turn`)
+    emitEngine(chatId, 'running', 'queued another turn', userId)
     return
   }
   void runAgentLoop(chatId, reply, userId)
@@ -319,6 +328,7 @@ function scheduleAgent(chatId: string, reply: string, userId?: string) {
 
 async function runAgentLoop(chatId: string, reply: string, userId?: string) {
   running.add(chatId)
+  emitEngine(chatId, 'running', 'starting', userId)
   try {
     await runAgentForChat(chatId, reply, userId)
     while (pending.has(chatId)) {
@@ -328,6 +338,7 @@ async function runAgentLoop(chatId: string, reply: string, userId?: string) {
     }
   } finally {
     running.delete(chatId)
+    emitEngine(chatId, 'idle', undefined, userId)
   }
 }
 
@@ -545,6 +556,15 @@ spindle.onFrontendMessage(async (payload: any, userId) => {
       const chatId = await activeChatId(payload.chatId, userId)
       const debug = chatId ? await loadDebug(chatId) : {}
       spindle.sendToFrontend({ type: 'debug', debug }, userId)
+      break
+    }
+
+    case 'get_engine': {
+      const chatId = await activeChatId(payload.chatId, userId)
+      spindle.sendToFrontend(
+        { type: 'engine', chatId, state: chatId && running.has(chatId) ? 'running' : 'idle' },
+        userId,
+      )
       break
     }
 
