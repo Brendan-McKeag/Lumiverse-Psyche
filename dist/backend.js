@@ -1116,11 +1116,10 @@ spindle.on("GENERATION_STOPPED", async (payload, userId) => {
   dropObserver(payload.chatId);
   await runAgentForChat(payload.chatId, reply, userId);
 });
+var loggedInject = false;
+var loggedMissing = false;
 async function injectionInterceptor(ctx) {
   if (!config.enabled || !ctx.chatId)
-    return;
-  const entry = ctx.entries.find((e) => isInjectionEntry(e.extensions));
-  if (!entry)
     return;
   let run;
   try {
@@ -1131,20 +1130,30 @@ async function injectionInterceptor(ctx) {
   const directive = buildDirective(run);
   if (!directive)
     return;
-  return { forced: [entry.id], mutated: [{ id: entry.id, content: directive }] };
+  const entry = ctx.entries.find((e) => isInjectionEntry(e.extensions));
+  if (!entry) {
+    if (!loggedMissing) {
+      loggedMissing = true;
+      spindle.log.warn(`[psyche] have state for chat ${ctx.chatId} but no injection entry among ${ctx.entries.length} candidates \u2014 the Psyche book may be detached from the character; injection skipped`);
+    }
+    return;
+  }
+  if (!loggedInject) {
+    loggedInject = true;
+    spindle.log.info(`[psyche] injecting emotional state (${directive.length} chars) into chat ${ctx.chatId}`);
+  }
+  return {
+    enabled: [entry.id],
+    forced: [entry.id],
+    mutated: [{ id: entry.id, content: directive }]
+  };
 }
-var wiRegistered = false;
 function registerInjectionInterceptor() {
-  if (wiRegistered)
-    return;
-  if (!spindle.permissions.has("generation"))
-    return;
   try {
     spindle.registerWorldInfoInterceptor(injectionInterceptor, 50);
-    wiRegistered = true;
     spindle.log.info("[psyche] injection interceptor registered");
   } catch (err) {
-    spindle.log.warn(`[psyche] interceptor registration deferred: ${String(err)}`);
+    spindle.log.warn(`[psyche] interceptor registration failed: ${String(err)}`);
   }
 }
 async function activeChatId(payloadChatId, userId) {
@@ -1330,14 +1339,8 @@ function clampFloat(v, min, max) {
     return min;
   return Math.max(min, Math.min(max, n));
 }
-try {
-  spindle.permissions.onChanged(() => registerInjectionInterceptor());
-} catch {}
+registerInjectionInterceptor();
 (async () => {
   await loadConfig();
-  try {
-    await spindle.permissions.getGranted();
-  } catch {}
-  registerInjectionInterceptor();
   spindle.log.info("[psyche] loaded");
 })();

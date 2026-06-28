@@ -290,14 +290,18 @@ spindle.on('GENERATION_STOPPED', async (payload, userId) => {
  * extension is off this never runs, the entry stays disabled, and the prompt is
  * completely normal.
  *
- * Registration requires the `generation` permission. On a fresh install that
- * grant may not exist yet, so we register only once it is present and (re)try
- * when permissions change — never at module load, where a denial would be lost.
+ * Registration is unconditional at boot (it requires the `generation`
+ * permission; if that isn't granted yet the host ignores the registration and
+ * it takes effect after the worker reloads on grant — same as any WI extension).
  * ------------------------------------------------------------------ */
+
+// One-time diagnostics so it is obvious from the logs whether state actually
+// reaches the prompt, without spamming every generation.
+let loggedInject = false
+let loggedMissing = false
+
 async function injectionInterceptor(ctx: import('lumiverse-spindle-types').WorldInfoInterceptorCtxDTO) {
   if (!config.enabled || !ctx.chatId) return
-  const entry = ctx.entries.find((e) => isInjectionEntry(e.extensions))
-  if (!entry) return // not provisioned yet for this character
 
   let run: RunState
   try {
@@ -306,21 +310,38 @@ async function injectionInterceptor(ctx: import('lumiverse-spindle-types').World
     return
   }
   const directive = buildDirective(run)
-  if (!directive) return // nothing seeded/present -> leave the entry disabled
+  if (!directive) return // nothing seeded/present -> inject nothing
 
-  return { forced: [entry.id], mutated: [{ id: entry.id, content: directive }] }
+  const entry = ctx.entries.find((e) => isInjectionEntry(e.extensions))
+  if (!entry) {
+    if (!loggedMissing) {
+      loggedMissing = true
+      spindle.log.warn(
+        `[psyche] have state for chat ${ctx.chatId} but no injection entry among ${ctx.entries.length} candidates — the Psyche book may be detached from the character; injection skipped`,
+      )
+    }
+    return
+  }
+
+  if (!loggedInject) {
+    loggedInject = true
+    spindle.log.info(`[psyche] injecting emotional state (${directive.length} chars) into chat ${ctx.chatId}`)
+  }
+  // enabled clears the disabled-at-rest flag; forced injects it unconditionally
+  // (its keyword never matches); mutated overrides the placeholder with live state.
+  return {
+    enabled: [entry.id],
+    forced: [entry.id],
+    mutated: [{ id: entry.id, content: directive }],
+  }
 }
 
-let wiRegistered = false
 function registerInjectionInterceptor() {
-  if (wiRegistered) return
-  if (!spindle.permissions.has('generation')) return // wait for the grant
   try {
     spindle.registerWorldInfoInterceptor(injectionInterceptor, 50)
-    wiRegistered = true
     spindle.log.info('[psyche] injection interceptor registered')
   } catch (err) {
-    spindle.log.warn(`[psyche] interceptor registration deferred: ${String(err)}`)
+    spindle.log.warn(`[psyche] interceptor registration failed: ${String(err)}`)
   }
 }
 
@@ -523,21 +544,12 @@ function clampFloat(v: unknown, min: number, max: number): number {
 }
 
 /* ------------------------------- boot ------------------------------ */
-// The world-info interceptor needs `generation`. Register it as soon as that
-// permission is present — now if already granted, otherwise when it flips on.
-try {
-  spindle.permissions.onChanged(() => registerInjectionInterceptor())
-} catch {
-  /* permissions API unavailable — ignore */
-}
+// Register the injection interceptor unconditionally (the proven WI-extension
+// pattern). If `generation` isn't granted yet, the host ignores it and it takes
+// effect when the worker reloads on grant.
+registerInjectionInterceptor()
 
 ;(async () => {
   await loadConfig()
-  try {
-    await spindle.permissions.getGranted() // warms the local permission cache
-  } catch {
-    /* ignore */
-  }
-  registerInjectionInterceptor()
   spindle.log.info('[psyche] loaded')
 })()
