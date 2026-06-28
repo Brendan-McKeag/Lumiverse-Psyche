@@ -12,7 +12,7 @@ import {
   isInjectionEntry,
   slugify,
 } from './run'
-import { seedRun, runPsycheAgent, ruminate } from './agent'
+import { seedRun, runPsycheAgent, ruminate, StageTrace } from './agent'
 import {
   EMOTIONS,
   EMOTION_BY_KEY,
@@ -74,6 +74,32 @@ async function loadRun(chatId: string): Promise<RunState> {
 async function saveRun(run: RunState) {
   run.updatedAt = Date.now()
   await spindle.storage.setJson(runPath(run.chatId), run, { indent: 2 })
+}
+
+/* ----------------------------- debug ------------------------------- *
+ * Per-chat capture of exactly what each engine step sent + got back, so the
+ * panel can show "what's being sent at each step" behind buttons.
+ * ------------------------------------------------------------------ */
+interface DebugBundle {
+  seed?: StageTrace
+  update?: StageTrace
+  rumination?: StageTrace
+  injection?: { at: number; directive: string }
+}
+const debugPath = (chatId: string) => `debug/${chatId}.json`
+const DBG_REQ_CAP = 24000
+const DBG_RES_CAP = 10000
+
+function capText(s: string, n: number): string {
+  if (s.length <= n) return s
+  const head = Math.floor(n * 0.7)
+  return `${s.slice(0, head)}\n\n…[${s.length - n} chars elided]…\n\n${s.slice(-(n - head))}`
+}
+function capTrace(t: StageTrace): StageTrace {
+  return { ...t, request: capText(t.request, DBG_REQ_CAP), response: capText(t.response, DBG_RES_CAP) }
+}
+async function loadDebug(chatId: string): Promise<DebugBundle> {
+  return spindle.storage.getJson<DebugBundle>(debugPath(chatId), { fallback: {} })
 }
 
 async function characterForChat(
@@ -175,6 +201,7 @@ async function runAgentForChat(chatId: string, reply: string, userId?: string) {
   if (running.has(chatId)) return
 
   running.add(chatId)
+  const dbg: DebugBundle = {}
   try {
     const run = await loadRun(chatId)
     const primary = ensurePrimary(run, char.id, char.name)
@@ -193,6 +220,7 @@ async function runAgentForChat(chatId: string, reply: string, userId?: string) {
           signal: AbortSignal.timeout(config.agentTimeoutMs),
           userId,
           connectionId: config.agentConnectionId || undefined,
+          onTrace: (t) => (dbg.seed = capTrace(t)),
         })
       } catch (err) {
         const m = err instanceof Error && err.name === 'AbortError' ? 'timed out' : String(err)
@@ -216,6 +244,7 @@ async function runAgentForChat(chatId: string, reply: string, userId?: string) {
         signal: AbortSignal.timeout(config.agentTimeoutMs),
         userId,
         connectionId: config.agentConnectionId || undefined,
+        onTrace: (t) => (dbg.update = capTrace(t)),
       })
     } catch (err) {
       const m = err instanceof Error && err.name === 'AbortError' ? 'timed out' : String(err)
@@ -230,6 +259,7 @@ async function runAgentForChat(chatId: string, reply: string, userId?: string) {
         signal: AbortSignal.timeout(config.agentTimeoutMs),
         userId,
         connectionId: config.agentConnectionId || undefined,
+        onTrace: (t) => (dbg.rumination = capTrace(t)),
       })
     } catch (err) {
       spindle.log.error(`[psyche] rumination failed: ${String(err)}`)
@@ -237,6 +267,19 @@ async function runAgentForChat(chatId: string, reply: string, userId?: string) {
 
     await saveRun(run)
     await refreshInjection(chatId, userId) // push the new state into the prompt
+
+    // Capture the assembled directive the prose engine receives, then persist all
+    // traces (merging so steps that did not run this turn keep their last capture).
+    dbg.injection = {
+      at: Date.now(),
+      directive: capText(buildDirective(run) ?? '(nothing injected — not seeded or no one present)', DBG_REQ_CAP),
+    }
+    try {
+      const prev = await loadDebug(chatId)
+      await spindle.storage.setJson(debugPath(chatId), { ...prev, ...dbg })
+    } catch (err) {
+      spindle.log.warn(`[psyche] could not save debug traces: ${String(err)}`)
+    }
 
     spindle.sendToFrontend({
       type: 'state_changed',
@@ -466,6 +509,13 @@ spindle.onFrontendMessage(async (payload: any, userId) => {
     case 'get_state': {
       const chatId = await activeChatId(payload.chatId, userId)
       await sendState(chatId, userId)
+      break
+    }
+
+    case 'get_debug': {
+      const chatId = await activeChatId(payload.chatId, userId)
+      const debug = chatId ? await loadDebug(chatId) : {}
+      spindle.sendToFrontend({ type: 'debug', debug }, userId)
       break
     }
 

@@ -29,6 +29,35 @@ import {
 
 const AGENT_SENTINEL = '<<psyche_engine>>'
 
+/* ---------------------------- debug traces ------------------------- */
+/** A captured record of one LLM step: the prompt sent and the raw response. */
+export interface StageTrace {
+  at: number
+  request: string
+  response: string
+  meta?: string
+}
+export type TraceFn = (t: StageTrace) => void
+
+function blockToText(b: unknown): string {
+  if (typeof b === 'string') return b
+  const o = b as { type?: string; name?: string; input?: unknown; content?: unknown }
+  if (o?.type === 'tool_use') return `«tool_use ${o.name}»\n${JSON.stringify(o.input ?? {}, null, 2)}`
+  if (o?.type === 'tool_result')
+    return `«tool_result»\n${typeof o.content === 'string' ? o.content : JSON.stringify(o.content)}`
+  return JSON.stringify(b)
+}
+
+/** Flatten an LLM message array into readable text for the debug panel. */
+function serializeMessages(messages: LlmMessage[]): string {
+  return messages
+    .map((m) => {
+      const content = Array.isArray(m.content) ? m.content.map(blockToText).join('\n') : String(m.content ?? '')
+      return `========== [${m.role}] ==========\n${content}`
+    })
+    .join('\n\n')
+}
+
 /* one-line anchors for every feeling, so the engine calibrates consistently */
 function emotionGlossary(): string {
   return EMOTIONS.map((e) => {
@@ -122,7 +151,7 @@ export async function seedRun(
   run: RunState,
   primary: CharacterState,
   cardContext: string,
-  opts: { signal?: AbortSignal; userId?: string; connectionId?: string },
+  opts: { signal?: AbortSignal; userId?: string; connectionId?: string; onTrace?: TraceFn },
 ): Promise<string> {
   const messages: LlmMessage[] = [
     { role: 'system', content: seedSystemPrompt() },
@@ -150,6 +179,13 @@ export async function seedRun(
     userId: opts.userId,
     ...(opts.connectionId ? { connection_id: opts.connectionId } : {}),
   })) as { content?: string }
+
+  opts.onTrace?.({
+    at: Date.now(),
+    request: serializeMessages(messages),
+    response: res.content ?? '',
+    meta: `seed ${run.seed} · connection: ${opts.connectionId || 'prose default'}`,
+  })
 
   const parsed = extractJson(res.content ?? '') as SeedResult | null
   backfillEmotions(primary)
@@ -292,7 +328,14 @@ export async function runPsycheAgent(
   run: RunState,
   transcript: string,
   cardContext: string,
-  opts: { maxRounds: number; directive: string; signal?: AbortSignal; userId?: string; connectionId?: string },
+  opts: {
+    maxRounds: number
+    directive: string
+    signal?: AbortSignal
+    userId?: string
+    connectionId?: string
+    onTrace?: TraceFn
+  },
 ): Promise<AgentResult> {
   const messages: LlmMessage[] = [
     { role: 'system', content: updateSystemPrompt(opts.directive) },
@@ -371,6 +414,15 @@ export async function runPsycheAgent(
     messages.push({ role: 'user', content: resultParts })
   }
 
+  opts.onTrace?.({
+    at: Date.now(),
+    request: serializeMessages(messages),
+    response:
+      `final note: ${finalNote || '(none)'}\n\ntool calls (${toolCalls.length}):\n` +
+      toolCalls.map((t, i) => `${i + 1}. ${t.tool} -> ${t.result}`).join('\n'),
+    meta: `${rounds} rounds · connection: ${opts.connectionId || 'prose default'}`,
+  })
+
   return { rounds, toolCalls, finalNote }
 }
 
@@ -426,7 +478,7 @@ function ruminateSystemPrompt(): string {
 export async function ruminate(
   run: RunState,
   recentScene: string,
-  opts: { signal?: AbortSignal; userId?: string; connectionId?: string },
+  opts: { signal?: AbortSignal; userId?: string; connectionId?: string; onTrace?: TraceFn },
 ): Promise<void> {
   const present = Object.values(run.characters).filter((c) => c.present)
   if (!present.length) return
@@ -472,6 +524,13 @@ export async function ruminate(
     userId: opts.userId,
     ...(opts.connectionId ? { connection_id: opts.connectionId } : {}),
   })) as { content?: string }
+
+  opts.onTrace?.({
+    at: Date.now(),
+    request: serializeMessages(messages),
+    response: res.content ?? '',
+    meta: `${present.length} present · connection: ${opts.connectionId || 'prose default'}`,
+  })
 
   const parsed = extractJson(res.content ?? '') as Record<string, unknown> | null
   if (!parsed) return

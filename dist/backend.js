@@ -834,6 +834,28 @@ ${feelings}`
 
 // src/agent.ts
 var AGENT_SENTINEL = "<<psyche_engine>>";
+function blockToText(b) {
+  if (typeof b === "string")
+    return b;
+  const o = b;
+  if (o?.type === "tool_use")
+    return `\xABtool_use ${o.name}\xBB
+${JSON.stringify(o.input ?? {}, null, 2)}`;
+  if (o?.type === "tool_result")
+    return `\xABtool_result\xBB
+${typeof o.content === "string" ? o.content : JSON.stringify(o.content)}`;
+  return JSON.stringify(b);
+}
+function serializeMessages(messages) {
+  return messages.map((m) => {
+    const content = Array.isArray(m.content) ? m.content.map(blockToText).join(`
+`) : String(m.content ?? "");
+    return `========== [${m.role}] ==========
+${content}`;
+  }).join(`
+
+`);
+}
 function emotionGlossary() {
   return EMOTIONS.map((e) => {
     const range = e.kind === "bipolar" ? "(-1..1)" : "(0..1)";
@@ -936,6 +958,12 @@ async function seedRun(run, primary, cardContext, opts) {
     signal: opts.signal,
     userId: opts.userId,
     ...opts.connectionId ? { connection_id: opts.connectionId } : {}
+  });
+  opts.onTrace?.({
+    at: Date.now(),
+    request: serializeMessages(messages),
+    response: res.content ?? "",
+    meta: `seed ${run.seed} \xB7 connection: ${opts.connectionId || "prose default"}`
   });
   const parsed = extractJson(res.content ?? "");
   backfillEmotions(primary);
@@ -1132,6 +1160,16 @@ async function runPsycheAgent(run, transcript, cardContext, opts) {
     }
     messages.push({ role: "user", content: resultParts });
   }
+  opts.onTrace?.({
+    at: Date.now(),
+    request: serializeMessages(messages),
+    response: `final note: ${finalNote || "(none)"}
+
+tool calls (${toolCalls.length}):
+` + toolCalls.map((t, i) => `${i + 1}. ${t.tool} -> ${t.result}`).join(`
+`),
+    meta: `${rounds} rounds \xB7 connection: ${opts.connectionId || "prose default"}`
+  });
   return { rounds, toolCalls, finalNote };
 }
 function ruminateSystemPrompt() {
@@ -1208,6 +1246,12 @@ ${(c.canon ?? "").trim()}` : "",
     userId: opts.userId,
     ...opts.connectionId ? { connection_id: opts.connectionId } : {}
   });
+  opts.onTrace?.({
+    at: Date.now(),
+    request: serializeMessages(messages),
+    response: res.content ?? "",
+    meta: `${present.length} present \xB7 connection: ${opts.connectionId || "prose default"}`
+  });
   const parsed = extractJson(res.content ?? "");
   if (!parsed)
     return;
@@ -1258,6 +1302,25 @@ async function loadRun(chatId) {
 async function saveRun(run) {
   run.updatedAt = Date.now();
   await spindle.storage.setJson(runPath(run.chatId), run, { indent: 2 });
+}
+var debugPath = (chatId) => `debug/${chatId}.json`;
+var DBG_REQ_CAP = 24000;
+var DBG_RES_CAP = 1e4;
+function capText(s, n) {
+  if (s.length <= n)
+    return s;
+  const head = Math.floor(n * 0.7);
+  return `${s.slice(0, head)}
+
+\u2026[${s.length - n} chars elided]\u2026
+
+${s.slice(-(n - head))}`;
+}
+function capTrace(t) {
+  return { ...t, request: capText(t.request, DBG_REQ_CAP), response: capText(t.response, DBG_RES_CAP) };
+}
+async function loadDebug(chatId) {
+  return spindle.storage.getJson(debugPath(chatId), { fallback: {} });
 }
 async function characterForChat(chatId, userId) {
   const cached = chatChar.get(chatId);
@@ -1356,6 +1419,7 @@ async function runAgentForChat(chatId, reply, userId) {
   if (running.has(chatId))
     return;
   running.add(chatId);
+  const dbg = {};
   try {
     const run = await loadRun(chatId);
     const primary = ensurePrimary(run, char.id, char.name);
@@ -1367,7 +1431,8 @@ async function runAgentForChat(chatId, reply, userId) {
         seededNote = await seedRun(run, primary, cardContext, {
           signal: AbortSignal.timeout(config.agentTimeoutMs),
           userId,
-          connectionId: config.agentConnectionId || undefined
+          connectionId: config.agentConnectionId || undefined,
+          onTrace: (t) => dbg.seed = capTrace(t)
         });
       } catch (err) {
         const m = err instanceof Error && err.name === "AbortError" ? "timed out" : String(err);
@@ -1389,7 +1454,8 @@ async function runAgentForChat(chatId, reply, userId) {
         directive: config.directive,
         signal: AbortSignal.timeout(config.agentTimeoutMs),
         userId,
-        connectionId: config.agentConnectionId || undefined
+        connectionId: config.agentConnectionId || undefined,
+        onTrace: (t) => dbg.update = capTrace(t)
       });
     } catch (err) {
       const m = err instanceof Error && err.name === "AbortError" ? "timed out" : String(err);
@@ -1400,13 +1466,24 @@ async function runAgentForChat(chatId, reply, userId) {
       await ruminate(run, transcript.slice(-6000), {
         signal: AbortSignal.timeout(config.agentTimeoutMs),
         userId,
-        connectionId: config.agentConnectionId || undefined
+        connectionId: config.agentConnectionId || undefined,
+        onTrace: (t) => dbg.rumination = capTrace(t)
       });
     } catch (err) {
       spindle.log.error(`[psyche] rumination failed: ${String(err)}`);
     }
     await saveRun(run);
     await refreshInjection(chatId, userId);
+    dbg.injection = {
+      at: Date.now(),
+      directive: capText(buildDirective(run) ?? "(nothing injected \u2014 not seeded or no one present)", DBG_REQ_CAP)
+    };
+    try {
+      const prev = await loadDebug(chatId);
+      await spindle.storage.setJson(debugPath(chatId), { ...prev, ...dbg });
+    } catch (err) {
+      spindle.log.warn(`[psyche] could not save debug traces: ${String(err)}`);
+    }
     spindle.sendToFrontend({
       type: "state_changed",
       chatId,
@@ -1591,6 +1668,12 @@ spindle.onFrontendMessage(async (payload, userId) => {
       case "get_state": {
         const chatId = await activeChatId(payload.chatId, userId);
         await sendState(chatId, userId);
+        break;
+      }
+      case "get_debug": {
+        const chatId = await activeChatId(payload.chatId, userId);
+        const debug = chatId ? await loadDebug(chatId) : {};
+        spindle.sendToFrontend({ type: "debug", debug }, userId);
         break;
       }
       case "reseed": {

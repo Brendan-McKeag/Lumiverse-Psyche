@@ -71,6 +71,8 @@ export function setup(ctx: SpindleFrontendContext) {
     .ps-sheet .sk { font-size:11px; font-weight:600; }
     .ps-demeanor { font-size:12px; font-style:italic; line-height:1.45; padding:8px 10px; border-left:2px solid var(--lumiverse-accent,#6c8cff); background:var(--lumiverse-fill-subtle); border-radius:var(--lumiverse-radius); }
     .ps-intent { font-size:11.5px; color:var(--lumiverse-accent,#6c8cff); padding:2px 2px; }
+    .ps-btn.sel { border-color:var(--lumiverse-accent,#6c8cff); color:var(--lumiverse-accent,#6c8cff); }
+    .ps-pre { white-space:pre-wrap; word-break:break-word; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:10.5px; line-height:1.4; max-height:360px; overflow:auto; padding:8px; background:var(--lumiverse-fill-subtle); border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius); }
   `)
 
   const tab = ctx.ui.registerDrawerTab({
@@ -143,6 +145,19 @@ export function setup(ctx: SpindleFrontendContext) {
         <div><span class="ps-muted">Engine model (separate connection for Psyche's bookkeeping)</span><select class="ps-input ps-conn"><option value="">Same as the prose model</option></select></div>
         <div class="ps-row"><button class="ps-btn ps-save-cfg">Save settings</button></div>
       </div>
+
+      <div class="ps-section">
+        <h4 class="ps-h">Debug — what each step sent</h4>
+        <div class="ps-row">
+          <button class="ps-btn ps-dbg" data-k="seed">1 · Seed</button>
+          <button class="ps-btn ps-dbg" data-k="update">2 · Mind update</button>
+          <button class="ps-btn ps-dbg" data-k="rumination">3 · Rumination</button>
+          <button class="ps-btn ps-dbg" data-k="injection">→ Injected directive</button>
+          <button class="ps-btn ps-dbg-refresh" title="Re-fetch latest">↻</button>
+        </div>
+        <div class="ps-muted ps-dbg-meta"></div>
+        <pre class="ps-pre ps-dbg-out">Click a step to see the last request sent to the model and its response. Captured per turn.</pre>
+      </div>
     </div>
   `
 
@@ -170,6 +185,10 @@ export function setup(ctx: SpindleFrontendContext) {
   const connEl = q<HTMLSelectElement>('.ps-conn')
   let connOptions: { id: string; name: string; provider: string; model: string }[] = []
   let agentConnId = ''
+  const dbgOut = q<HTMLElement>('.ps-dbg-out')
+  const dbgMeta = q<HTMLElement>('.ps-dbg-meta')
+  let debugData: any = {}
+  let dbgKey = 'injection'
 
   const esc = (s: string) =>
     s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string))
@@ -318,14 +337,53 @@ export function setup(ctx: SpindleFrontendContext) {
     connEl.value = agentConnId
   }
 
+  function renderDebug() {
+    tab.root
+      .querySelectorAll('.ps-dbg')
+      .forEach((b) => b.classList.toggle('sel', (b as HTMLElement).dataset.k === dbgKey))
+    if (dbgKey === 'injection') {
+      const inj = debugData?.injection
+      dbgMeta.textContent = inj ? `injected directive · ${new Date(inj.at).toLocaleString()}` : 'no capture yet'
+      dbgOut.textContent = inj?.directive || 'No directive captured yet — take a turn.'
+      return
+    }
+    const t = debugData?.[dbgKey]
+    if (!t) {
+      dbgMeta.textContent = 'no capture yet'
+      dbgOut.textContent =
+        dbgKey === 'seed'
+          ? 'No seed capture yet — seed only runs on the first turn of a run (try Reroll seed).'
+          : `No ${dbgKey} capture yet — take a turn.`
+      return
+    }
+    dbgMeta.textContent = `${t.meta ?? ''} · ${new Date(t.at).toLocaleString()}`
+    dbgOut.textContent =
+      `########## REQUEST — sent to the model ##########\n\n${t.request}\n\n` +
+      `########## RESPONSE — model output ##########\n\n${t.response}`
+  }
+  const requestDebug = () => ctx.sendToBackend({ type: 'get_debug' })
+
   ctx.sendToBackend({ type: 'get_config' })
   ctx.sendToBackend({ type: 'get_connections' })
   requestState()
-  tab.onActivate(requestState)
+  requestDebug()
+  tab.onActivate(() => {
+    requestState()
+    requestDebug()
+  })
   ctx.events.on('CHAT_SWITCHED', () => {
     selectedId = null
     requestState()
+    requestDebug()
   })
+
+  tab.root.querySelectorAll('.ps-dbg').forEach((b) =>
+    b.addEventListener('click', () => {
+      dbgKey = (b as HTMLElement).dataset.k!
+      renderDebug()
+    }),
+  )
+  q('.ps-dbg-refresh').addEventListener('click', requestDebug)
 
   q('.ps-refresh').addEventListener('click', requestState)
   presentEl.addEventListener('change', () => {
@@ -399,6 +457,12 @@ export function setup(ctx: SpindleFrontendContext) {
         tab.setBadge('•')
         setTimeout(() => tab.setBadge(null), 4000)
         requestState()
+        requestDebug()
+        break
+      }
+      case 'debug': {
+        debugData = p.debug ?? {}
+        renderDebug()
         break
       }
       case 'config': {
