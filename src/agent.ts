@@ -2,7 +2,7 @@ declare const spindle: import('lumiverse-spindle-types').SpindleAPI
 type LlmMessage = import('lumiverse-spindle-types').LlmMessageDTO
 
 import { TOOL_SCHEMAS, executeTool } from './tools'
-import { RunState, CharacterState, newCharacter, backfillEmotions, groundedReadout } from './run'
+import { RunState, CharacterState, newCharacter, backfillEmotions, groundedReadout, overrideDirective } from './run'
 import {
   EMOTIONS,
   EMOTION_BY_KEY,
@@ -401,6 +401,12 @@ function demeanorSystemPrompt(): string {
     '    steering, testing, pushing back, withholding. This is what makes them drive',
     '    the scene rather than just react. It must be THEIR agenda, not the player\'s.',
     '',
+    'OVERRIDE: if a character has an "OVERRIDING STATE", that feeling has seized them.',
+    'The demeanor must show them CONSUMED by it — composure gone, not balanced or',
+    '"in character"; at all-consuming intensity they have broken from their usual self.',
+    'The intent must be whatever that feeling drives them to do, full force. Do not',
+    'soften it with their normal manner.',
+    '',
     'Never name an emotion or a number; never narrate plot that has not happened; do',
     'not write dialogue. Return ONLY JSON mapping each character id to an object:',
     '{ "<id>": { "demeanor": "<...>", "intent": "<...>" }, ... }',
@@ -422,6 +428,7 @@ export async function synthesizeDemeanor(
         `### ${c.id} — ${c.name}`,
         c.persona ? `persona: ${c.persona}` : '',
         (c.goals ?? []).length ? `goals: ${(c.goals ?? []).join('; ')}` : '',
+        overrideDirective(c), // a maxed feeling must dominate the brief
         groundedReadout(c),
       ]
         .filter(Boolean)

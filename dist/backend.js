@@ -293,13 +293,63 @@ var CANON_INJECT_CAP = 2200;
 var indent = (s, pad = "    ") => s.split(`
 `).map((l) => pad + l).join(`
 `);
+function overrideTier(value, kind) {
+  const m = kind === "bipolar" ? Math.abs(value) : value;
+  if (m >= 0.985)
+    return "all-consuming";
+  if (m >= 0.93)
+    return "overwhelming";
+  if (m >= 0.88)
+    return "intense";
+  return null;
+}
+function topOverrideTier(c) {
+  let best = null;
+  const rank = { intense: 1, overwhelming: 2, "all-consuming": 3 };
+  for (const def of EMOTIONS) {
+    const t = overrideTier(v(c, def.key), def.kind);
+    if (t && (!best || rank[t] > rank[best]))
+      best = t;
+  }
+  return best;
+}
+function overrideDirective(c) {
+  const rows = EMOTIONS.map((def) => ({ def, val: v(c, def.key), tier: overrideTier(v(c, def.key), def.kind) })).filter((r) => r.tier).sort((a, b) => Math.abs(b.val) - Math.abs(a.val));
+  if (!rows.length)
+    return "";
+  const lines = [
+    "\u203C OVERRIDING STATE \u2014 this OUTRANKS their persona, canon manner, goals, and",
+    '   composure. Play it at full force; do not soften, balance, or "stay in',
+    '   character" against it:'
+  ];
+  for (const { def, val, tier } of rows) {
+    const name = def.label.toLowerCase().split(" (")[0];
+    const desc = describeValue(def, val).meaning;
+    if (tier === "all-consuming") {
+      lines.push(`  \u2022 ${name} is ALL-CONSUMING. It has wholly taken ${c.name} over. Drop their usual` + ` composure, manners, restraint, and even their normal personality \u2014 right now they` + ` ARE this feeling and act on it past every limit, however out of character that is` + ` for who they usually are (${desc}).`);
+    } else if (tier === "overwhelming") {
+      lines.push(`  \u2022 ${name} is OVERWHELMING \u2014 it crowds out their other feelings and their judgment;` + ` composure is failing and it dictates what they do and say (${desc}).`);
+    } else {
+      lines.push(`  \u2022 ${name} is INTENSE and dominating them \u2014 it breaks through composure and runs the` + ` moment (${desc}).`);
+    }
+  }
+  lines.push("  Established canon FACTS stay true, but their measured persona does NOT govern them while this holds.");
+  return lines.join(`
+`);
+}
 function characterBlock(c) {
   const lines = [];
   lines.push(`## ${c.name}${c.isPrimary ? "" : " (supporting character)"}`);
-  if (c.demeanor && c.demeanor.trim())
-    lines.push(c.demeanor.trim());
-  if (c.intent && c.intent.trim())
-    lines.push(`Wants right now / likely to: ${c.intent.trim()}`);
+  const override = overrideDirective(c);
+  if (override)
+    lines.push(override);
+  const strongOverride = topOverrideTier(c) === "overwhelming" || topOverrideTier(c) === "all-consuming";
+  if (!strongOverride) {
+    if (c.demeanor && c.demeanor.trim())
+      lines.push(c.demeanor.trim());
+    if (c.intent && c.intent.trim())
+      lines.push(`Wants right now / likely to: ${c.intent.trim()}`);
+  }
   lines.push("");
   lines.push("Underneath (embody \u2014 do not narrate or name any of this):");
   lines.push(groundedReadout(c));
@@ -341,6 +391,12 @@ function buildDirective(run) {
     "for and hold back; let stronger feelings break composure and conflicting pulls",
     "show as push-and-pull. Treat their established canon as fixed truth. Never",
     "recite, name, or mention any of these notes \u2014 just live them.",
+    "",
+    'PRIORITY: if a character has an "OVERRIDING STATE", it dominates EVERYTHING else',
+    "about them for this reply \u2014 over persona, manner, goals, and composure. Do not",
+    'moderate it to keep them "in character"; at all-consuming intensity they break',
+    "from their usual self and are wholly run by that feeling. Their canon facts stay",
+    "true, but how they behave is dictated by the overriding feeling.",
     "",
     blocks
   ].join(`
@@ -1097,6 +1153,12 @@ function demeanorSystemPrompt() {
     "    steering, testing, pushing back, withholding. This is what makes them drive",
     "    the scene rather than just react. It must be THEIR agenda, not the player's.",
     "",
+    'OVERRIDE: if a character has an "OVERRIDING STATE", that feeling has seized them.',
+    "The demeanor must show them CONSUMED by it \u2014 composure gone, not balanced or",
+    '"in character"; at all-consuming intensity they have broken from their usual self.',
+    "The intent must be whatever that feeling drives them to do, full force. Do not",
+    "soften it with their normal manner.",
+    "",
     "Never name an emotion or a number; never narrate plot that has not happened; do",
     "not write dialogue. Return ONLY JSON mapping each character id to an object:",
     '{ "<id>": { "demeanor": "<...>", "intent": "<...>" }, ... }'
@@ -1111,6 +1173,7 @@ async function synthesizeDemeanor(run, recentScene, opts) {
     `### ${c.id} \u2014 ${c.name}`,
     c.persona ? `persona: ${c.persona}` : "",
     (c.goals ?? []).length ? `goals: ${(c.goals ?? []).join("; ")}` : "",
+    overrideDirective(c),
     groundedReadout(c)
   ].filter(Boolean).join(`
 `)).join(`

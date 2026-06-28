@@ -202,12 +202,85 @@ export function groundedReadout(c: CharacterState): string {
 const CANON_INJECT_CAP = 2200 // keep the bible from ballooning the prompt
 const indent = (s: string, pad = '    ') => s.split('\n').map((l) => pad + l).join('\n')
 
+type OverrideTier = 'intense' | 'overwhelming' | 'all-consuming'
+
+/** The dominance tier of a feeling that should OVERRIDE normal characterization. */
+function overrideTier(value: number, kind: EmotionDef['kind']): OverrideTier | null {
+  const m = kind === 'bipolar' ? Math.abs(value) : value
+  if (m >= 0.985) return 'all-consuming'
+  if (m >= 0.93) return 'overwhelming'
+  if (m >= 0.88) return 'intense'
+  return null
+}
+
+/**
+ * When a feeling reaches the top tiers it is not just "another item in the list"
+ * — it seizes priority over persona, manner, goals, and composure. At
+ * all-consuming it overrides the character's very self: they break from who they
+ * usually are. Returns '' when nothing is that high.
+ */
+/** The strongest override tier in play, or null. */
+export function topOverrideTier(c: CharacterState): OverrideTier | null {
+  let best: OverrideTier | null = null
+  const rank = { intense: 1, overwhelming: 2, 'all-consuming': 3 } as const
+  for (const def of EMOTIONS) {
+    const t = overrideTier(v(c, def.key), def.kind)
+    if (t && (!best || rank[t] > rank[best])) best = t
+  }
+  return best
+}
+
+export function overrideDirective(c: CharacterState): string {
+  const rows = EMOTIONS.map((def) => ({ def, val: v(c, def.key), tier: overrideTier(v(c, def.key), def.kind) }))
+    .filter((r) => r.tier)
+    .sort((a, b) => Math.abs(b.val) - Math.abs(a.val))
+  if (!rows.length) return ''
+
+  const lines: string[] = [
+    '‼ OVERRIDING STATE — this OUTRANKS their persona, canon manner, goals, and',
+    '   composure. Play it at full force; do not soften, balance, or "stay in',
+    '   character" against it:',
+  ]
+  for (const { def, val, tier } of rows) {
+    const name = def.label.toLowerCase().split(' (')[0]
+    const desc = describeValue(def, val).meaning
+    if (tier === 'all-consuming') {
+      lines.push(
+        `  • ${name} is ALL-CONSUMING. It has wholly taken ${c.name} over. Drop their usual` +
+          ` composure, manners, restraint, and even their normal personality — right now they` +
+          ` ARE this feeling and act on it past every limit, however out of character that is` +
+          ` for who they usually are (${desc}).`,
+      )
+    } else if (tier === 'overwhelming') {
+      lines.push(
+        `  • ${name} is OVERWHELMING — it crowds out their other feelings and their judgment;` +
+          ` composure is failing and it dictates what they do and say (${desc}).`,
+      )
+    } else {
+      lines.push(
+        `  • ${name} is INTENSE and dominating them — it breaks through composure and runs the` +
+          ` moment (${desc}).`,
+      )
+    }
+  }
+  lines.push('  Established canon FACTS stay true, but their measured persona does NOT govern them while this holds.')
+  return lines.join('\n')
+}
+
 function characterBlock(c: CharacterState): string {
   const lines: string[] = []
   lines.push(`## ${c.name}${c.isPrimary ? '' : ' (supporting character)'}`)
 
-  if (c.demeanor && c.demeanor.trim()) lines.push(c.demeanor.trim())
-  if (c.intent && c.intent.trim()) lines.push(`Wants right now / likely to: ${c.intent.trim()}`)
+  const override = overrideDirective(c)
+  if (override) lines.push(override) // highest priority — placed first, before anything moderating
+
+  // A stored demeanor/intent describes a calmer past moment; when a strong override
+  // is active (e.g. a hand-set extreme) that brief would only moderate it, so drop it.
+  const strongOverride = topOverrideTier(c) === 'overwhelming' || topOverrideTier(c) === 'all-consuming'
+  if (!strongOverride) {
+    if (c.demeanor && c.demeanor.trim()) lines.push(c.demeanor.trim())
+    if (c.intent && c.intent.trim()) lines.push(`Wants right now / likely to: ${c.intent.trim()}`)
+  }
 
   lines.push('')
   lines.push('Underneath (embody — do not narrate or name any of this):')
@@ -255,6 +328,12 @@ export function buildDirective(run: RunState): string | null {
     'for and hold back; let stronger feelings break composure and conflicting pulls',
     'show as push-and-pull. Treat their established canon as fixed truth. Never',
     'recite, name, or mention any of these notes — just live them.',
+    '',
+    'PRIORITY: if a character has an "OVERRIDING STATE", it dominates EVERYTHING else',
+    'about them for this reply — over persona, manner, goals, and composure. Do not',
+    'moderate it to keep them "in character"; at all-consuming intensity they break',
+    'from their usual self and are wholly run by that feeling. Their canon facts stay',
+    'true, but how they behave is dictated by the overriding feeling.',
     '',
     blocks,
   ].join('\n')
