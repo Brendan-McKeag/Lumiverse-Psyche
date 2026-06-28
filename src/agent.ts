@@ -2,7 +2,7 @@ declare const spindle: import('lumiverse-spindle-types').SpindleAPI
 type LlmMessage = import('lumiverse-spindle-types').LlmMessageDTO
 
 import { TOOL_SCHEMAS, executeTool } from './tools'
-import { RunState, CharacterState, newCharacter, backfillEmotions } from './run'
+import { RunState, CharacterState, newCharacter, backfillEmotions, groundedReadout } from './run'
 import {
   EMOTIONS,
   EMOTION_BY_KEY,
@@ -341,6 +341,86 @@ export async function runPsycheAgent(
   }
 
   return { rounds, toolCalls, finalNote }
+}
+
+/* ----------------------- demeanor synthesis ------------------------ */
+/*
+ * After the affect vector is updated, weave it into a short, present-tense read
+ * of how each present character is ACTING — the part the writer model leans on
+ * instead of a flat list of feelings. This is where emotion COMBINATIONS turn
+ * into behavior (conflicts, suppression, what wins out).
+ */
+
+function demeanorSystemPrompt(): string {
+  return [
+    AGENT_SENTINEL,
+    'You are Psyche\'s behavior synthesizer. Given a character\'s persona and their',
+    'current inner state (energy, agreeableness, what pulls them toward vs. away,',
+    'their power stance, and any inner tensions), write a tight DEMEANOR BRIEF: how',
+    'they are carrying themselves and behaving RIGHT NOW.',
+    '',
+    'Rules:',
+    '  • 2-4 sentences, present tense, third person using their name.',
+    '  • Describe BEHAVIOR — posture, eye contact, tone, pacing, what they pursue,',
+    '    what they suppress — not a list of emotions. Weave the combination together:',
+    '    show how the strongest feeling is colored, fought, or amplified by the rest.',
+    '  • When there is a tension, make it visible as contradiction or push-and-pull.',
+    '  • Never name an emotion or a number; never describe plot events; do not write',
+    '    dialogue. Just the read of their manner.',
+    '',
+    'Return ONLY JSON mapping each character id to its brief:',
+    '{ "<id>": "<brief>", ... }',
+  ].join('\n')
+}
+
+/** Synthesize + store a demeanor brief for every present character. */
+export async function synthesizeDemeanor(
+  run: RunState,
+  recentScene: string,
+  opts: { signal?: AbortSignal; userId?: string },
+): Promise<void> {
+  const present = Object.values(run.characters).filter((c) => c.present)
+  if (!present.length) return
+
+  const blocks = present
+    .map((c) =>
+      [`### ${c.id} — ${c.name}`, c.persona ? `persona: ${c.persona}` : '', groundedReadout(c)]
+        .filter(Boolean)
+        .join('\n'),
+    )
+    .join('\n\n')
+
+  const messages: LlmMessage[] = [
+    { role: 'system', content: demeanorSystemPrompt() },
+    {
+      role: 'user',
+      content: [
+        recentScene.trim() ? ['Recent scene (most recent last):', '"""', recentScene.trim(), '"""', ''].join('\n') : '',
+        'Characters and their current inner state:',
+        blocks,
+        '',
+        'Write each one\'s demeanor brief now. Return only the JSON.',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    },
+  ]
+
+  const res = (await spindle.generate.quiet({
+    type: 'quiet',
+    messages,
+    parameters: { temperature: 0.7 },
+    reasoning: { source: 'off' },
+    signal: opts.signal,
+    userId: opts.userId,
+  })) as { content?: string }
+
+  const parsed = extractJson(res.content ?? '') as Record<string, unknown> | null
+  if (!parsed) return
+  for (const c of present) {
+    const b = parsed[c.id]
+    if (typeof b === 'string' && b.trim()) c.demeanor = b.trim()
+  }
 }
 
 export { AGENT_SENTINEL, EmotionDef }

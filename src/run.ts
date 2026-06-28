@@ -4,6 +4,8 @@ import {
   EMOTIONS,
   EMOTION_BY_KEY,
   EmotionDef,
+  BehaviorClass,
+  behaviorClass,
   describeValue,
   neutralVector,
 } from './affect'
@@ -37,6 +39,13 @@ export interface CharacterState {
   emotions: Record<string, { value: number; baseline: number }>
   /** free-form, fully engine-controlled sheet sections (name -> markdown) */
   sheet: Record<string, string>
+  /**
+   * Present-tense "demeanor brief": an LLM-woven 2-4 sentence read of how this
+   * character is ACTING right now, synthesized from the whole affect vector
+   * (including conflicts). Refreshed each turn; the grounded readout below it is
+   * always recomputed live so manual value edits still bite immediately.
+   */
+  demeanor?: string
   updatedAt: number
 }
 
@@ -107,73 +116,109 @@ export function slugify(name: string): string {
  */
 
 const SALIENT_UNI = 0.25 // unipolar feelings at/above this are worth mentioning
-const SALIENT_BI = 0.2 // bipolar axes beyond this magnitude are worth mentioning
-const MAX_SALIENT = 9
 
-function salientEmotions(c: CharacterState): { def: EmotionDef; value: number }[] {
-  const rows: { def: EmotionDef; value: number }[] = []
+const v = (c: CharacterState, k: string) => c.emotions[k]?.value ?? 0
+
+/** Salient unipolar feelings grouped by how they push behavior, strongest first. */
+function groupedSalient(c: CharacterState): Record<BehaviorClass, { def: EmotionDef; value: number }[]> {
+  const groups = {} as Record<BehaviorClass, { def: EmotionDef; value: number }[]>
   for (const def of EMOTIONS) {
-    if (def.kind === 'bipolar') continue // valence/mood are rendered separately
-    const v = c.emotions[def.key]?.value ?? 0
-    if (v >= SALIENT_UNI) rows.push({ def, value: v })
+    if (def.kind === 'bipolar') continue
+    const val = v(c, def.key)
+    if (val < SALIENT_UNI) continue
+    const cls = behaviorClass(def.key)
+    ;(groups[cls] ??= []).push({ def, value: val })
   }
-  rows.sort((a, b) => b.value - a.value)
-  return rows.slice(0, MAX_SALIENT)
+  for (const k of Object.keys(groups) as BehaviorClass[]) groups[k].sort((a, b) => b.value - a.value)
+  return groups
+}
+
+const fmtList = (rows: { def: EmotionDef; value: number }[]) =>
+  rows
+    .slice(0, 3)
+    .map(({ def, value }) => `${def.label.toLowerCase().split(' (')[0]} (${describeValue(def, value).label})`)
+    .join(', ')
+
+/** Opposing strong feelings that should read as visible inner conflict. */
+function detectTensions(c: CharacterState): string[] {
+  const out: string[] = []
+  const approach = Math.max(v(c, 'affection'), v(c, 'attraction'), v(c, 'desire'), v(c, 'tenderness'), v(c, 'trust'))
+  const guard = Math.max(v(c, 'fear'), v(c, 'anxiety'), v(c, 'insecurity'), v(c, 'shame'), v(c, 'embarrassment'))
+  if (v(c, 'desire') >= 0.45 && v(c, 'shame') >= 0.4) out.push('wants what they feel they should not — desire fighting shame')
+  else if (approach >= 0.45 && guard >= 0.4) out.push('drawn closer but braced to be hurt — approach, then retreat')
+  if (v(c, 'anger') >= 0.45 && Math.max(v(c, 'affection'), v(c, 'tenderness')) >= 0.4)
+    out.push('angry at someone they still care for — heat over a tender spot')
+  if (v(c, 'dominance') >= 0.45 && v(c, 'submission') >= 0.4) out.push('torn between taking control and giving in')
+  if (v(c, 'sexual_arousal') >= 0.5 && v(c, 'trust') < 0.3 && Math.max(v(c, 'fear'), v(c, 'anxiety')) >= 0.3)
+    out.push('aroused but not safe — wary of their own wanting')
+  return out.slice(0, 2)
+}
+
+/**
+ * The deterministic, always-current grounding: energy + agreeableness, feelings
+ * grouped by behavioral pull, the power stance, and any inner tensions. Recomputed
+ * from live values on every injection, so manual edits take effect immediately.
+ */
+export function groundedReadout(c: CharacterState): string {
+  const lines: string[] = []
+  lines.push(`  energy: ${describeValue(EMOTION_BY_KEY['valence'], v(c, 'valence')).meaning}`)
+  lines.push(`  agreeableness: ${describeValue(EMOTION_BY_KEY['mood'], v(c, 'mood')).meaning}`)
+
+  const g = groupedSalient(c)
+  if (g.approach?.length) lines.push(`  pulling them toward you: ${fmtList(g.approach)}`)
+  if (g.guard?.length) lines.push(`  holding back / wary: ${fmtList(g.guard)}`)
+  if (g.down?.length) lines.push(`  weighing them down: ${fmtList(g.down)}`)
+  if (g.aggression?.length) lines.push(`  sharp edge / friction: ${fmtList(g.aggression)}`)
+
+  const power: string[] = []
+  if (v(c, 'dominance') >= SALIENT_UNI) power.push('wants to take charge')
+  if (v(c, 'submission') >= SALIENT_UNI) power.push('inclined to yield, defer')
+  if (power.length) lines.push(`  power: ${power.join('; ')}`)
+
+  for (const t of detectTensions(c)) lines.push(`  tension: ${t}`)
+
+  if (lines.length === 2) lines.push('  (emotionally quiet, even-keeled)')
+  return lines.join('\n')
 }
 
 function characterBlock(c: CharacterState): string {
   const lines: string[] = []
   lines.push(`## ${c.name}${c.isPrimary ? '' : ' (supporting character)'}`)
 
-  const valence = c.emotions['valence']?.value ?? 0
-  const mood = c.emotions['mood']?.value ?? 0
-  const vDesc = describeValue(EMOTION_BY_KEY['valence'], valence)
-  const mDesc = describeValue(EMOTION_BY_KEY['mood'], mood)
-  lines.push(`- Energy (valence): ${vDesc.meaning}.`)
-  lines.push(`- Agreeableness (mood): ${mDesc.meaning}.`)
-
-  const sal = salientEmotions(c)
-  if (sal.length) {
-    const parts = sal.map(({ def, value }) => {
-      const d = describeValue(def, value)
-      return `${def.label.toLowerCase()} (${d.label})`
-    })
-    lines.push(`- Felt right now: ${parts.join(', ')}.`)
-  } else {
-    lines.push('- Felt right now: emotionally quiet, even-keeled.')
+  if (c.demeanor && c.demeanor.trim()) {
+    lines.push(c.demeanor.trim())
+    lines.push('')
+    lines.push('Underneath (embody this — do not narrate or name it):')
   }
+  lines.push(groundedReadout(c))
 
-  if (c.persona.trim()) {
-    lines.push(`- Who they are (drives their choices): ${c.persona.trim()}`)
-  }
+  if (c.persona.trim()) lines.push(`  who they are: ${c.persona.trim()}`)
   // Surface a couple of the most behaviorally-relevant sheet sections if present.
   for (const key of ['goal', 'goals', 'agenda', 'toward_player', 'attitude', 'state']) {
-    const v = c.sheet[key]
-    if (v && v.trim()) lines.push(`- ${key.replace(/_/g, ' ')}: ${v.trim()}`)
+    const s = c.sheet[key]
+    if (s && s.trim()) lines.push(`  ${key.replace(/_/g, ' ')}: ${s.trim()}`)
   }
   return lines.join('\n')
 }
 
 /**
- * Build the system block injected for the active reply. `activeCharacterId`
- * is the card character speaking this turn; we always include the primary and
- * any present supporting characters so multi-character scenes stay coherent.
- * Returns null when there is nothing seeded yet (so we inject nothing).
+ * Build the system block injected for the active reply. We always include the
+ * primary and any present supporting characters so multi-character scenes stay
+ * coherent. Returns null when there is nothing seeded yet (so we inject nothing).
  */
 export function buildDirective(run: RunState): string | null {
   const present = Object.values(run.characters).filter((c) => c.present)
   if (!present.length) return null
-  // Primary first, then supporting characters.
-  present.sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary))
+  present.sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary)) // primary first
 
   const blocks = present.map(characterBlock).join('\n\n')
   return [
-    '[Psyche — current emotional state]',
-    'Portray the following character(s) so their behavior, word choice, body',
-    'language and choices honestly express how they feel right now. Stronger',
-    'feelings should show more and be harder for them to hide; an all-consuming',
-    'feeling overrides their composure and pushes them to extremes. Never state',
-    'these values or mechanics out loud — just embody them in the prose.',
+    '[Psyche — how they are right now]',
+    'Portray each character below by ACTING their state — posture, tone, word',
+    'choice, what they reach for and what they hold back. Let stronger feelings',
+    'show more and break composure; where two pulls conflict, let it show as',
+    'hesitation, contradiction, push-and-pull. Embody it in the prose; never',
+    'recite or name these feelings, and never mention these notes.',
     '',
     blocks,
   ].join('\n')

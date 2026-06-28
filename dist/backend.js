@@ -44,6 +44,49 @@ var EMOTIONS = [
 ];
 var EMOTION_BY_KEY = Object.fromEntries(EMOTIONS.map((e) => [e.key, e]));
 var EMOTION_KEYS = EMOTIONS.map((e) => e.key);
+var BEHAVIOR_CLASS = {
+  affection: "approach",
+  attraction: "approach",
+  desire: "approach",
+  sexual_arousal: "approach",
+  tenderness: "approach",
+  trust: "approach",
+  adoration: "approach",
+  gratitude: "approach",
+  joy: "approach",
+  contentment: "approach",
+  excitement: "approach",
+  amusement: "approach",
+  playfulness: "approach",
+  curiosity: "approach",
+  hope: "approach",
+  confidence: "approach",
+  pride: "approach",
+  possessiveness: "approach",
+  fear: "guard",
+  anxiety: "guard",
+  insecurity: "guard",
+  embarrassment: "guard",
+  shame: "guard",
+  guilt: "guard",
+  sadness: "down",
+  loneliness: "down",
+  grief: "down",
+  boredom: "down",
+  fatigue: "down",
+  anger: "aggression",
+  irritation: "aggression",
+  frustration: "aggression",
+  jealousy: "aggression",
+  contempt: "aggression",
+  disgust: "aggression",
+  defiance: "aggression",
+  dominance: "assert",
+  submission: "yield"
+};
+function behaviorClass(key) {
+  return BEHAVIOR_CLASS[key] ?? "other";
+}
 var VMAX = 0.9995;
 var clampUni = (v) => Math.max(0, Math.min(VMAX, v));
 var clampBi = (v) => Math.max(-VMAX, Math.min(VMAX, v));
@@ -184,45 +227,81 @@ function slugify(name) {
   return base || `npc_${Math.random().toString(36).slice(2, 7)}`;
 }
 var SALIENT_UNI = 0.25;
-var MAX_SALIENT = 9;
-function salientEmotions(c) {
-  const rows = [];
+var v = (c, k) => c.emotions[k]?.value ?? 0;
+function groupedSalient(c) {
+  const groups = {};
   for (const def of EMOTIONS) {
     if (def.kind === "bipolar")
       continue;
-    const v = c.emotions[def.key]?.value ?? 0;
-    if (v >= SALIENT_UNI)
-      rows.push({ def, value: v });
+    const val = v(c, def.key);
+    if (val < SALIENT_UNI)
+      continue;
+    const cls = behaviorClass(def.key);
+    (groups[cls] ??= []).push({ def, value: val });
   }
-  rows.sort((a, b) => b.value - a.value);
-  return rows.slice(0, MAX_SALIENT);
+  for (const k of Object.keys(groups))
+    groups[k].sort((a, b) => b.value - a.value);
+  return groups;
+}
+var fmtList = (rows) => rows.slice(0, 3).map(({ def, value }) => `${def.label.toLowerCase().split(" (")[0]} (${describeValue(def, value).label})`).join(", ");
+function detectTensions(c) {
+  const out = [];
+  const approach = Math.max(v(c, "affection"), v(c, "attraction"), v(c, "desire"), v(c, "tenderness"), v(c, "trust"));
+  const guard = Math.max(v(c, "fear"), v(c, "anxiety"), v(c, "insecurity"), v(c, "shame"), v(c, "embarrassment"));
+  if (v(c, "desire") >= 0.45 && v(c, "shame") >= 0.4)
+    out.push("wants what they feel they should not \u2014 desire fighting shame");
+  else if (approach >= 0.45 && guard >= 0.4)
+    out.push("drawn closer but braced to be hurt \u2014 approach, then retreat");
+  if (v(c, "anger") >= 0.45 && Math.max(v(c, "affection"), v(c, "tenderness")) >= 0.4)
+    out.push("angry at someone they still care for \u2014 heat over a tender spot");
+  if (v(c, "dominance") >= 0.45 && v(c, "submission") >= 0.4)
+    out.push("torn between taking control and giving in");
+  if (v(c, "sexual_arousal") >= 0.5 && v(c, "trust") < 0.3 && Math.max(v(c, "fear"), v(c, "anxiety")) >= 0.3)
+    out.push("aroused but not safe \u2014 wary of their own wanting");
+  return out.slice(0, 2);
+}
+function groundedReadout(c) {
+  const lines = [];
+  lines.push(`  energy: ${describeValue(EMOTION_BY_KEY["valence"], v(c, "valence")).meaning}`);
+  lines.push(`  agreeableness: ${describeValue(EMOTION_BY_KEY["mood"], v(c, "mood")).meaning}`);
+  const g = groupedSalient(c);
+  if (g.approach?.length)
+    lines.push(`  pulling them toward you: ${fmtList(g.approach)}`);
+  if (g.guard?.length)
+    lines.push(`  holding back / wary: ${fmtList(g.guard)}`);
+  if (g.down?.length)
+    lines.push(`  weighing them down: ${fmtList(g.down)}`);
+  if (g.aggression?.length)
+    lines.push(`  sharp edge / friction: ${fmtList(g.aggression)}`);
+  const power = [];
+  if (v(c, "dominance") >= SALIENT_UNI)
+    power.push("wants to take charge");
+  if (v(c, "submission") >= SALIENT_UNI)
+    power.push("inclined to yield, defer");
+  if (power.length)
+    lines.push(`  power: ${power.join("; ")}`);
+  for (const t of detectTensions(c))
+    lines.push(`  tension: ${t}`);
+  if (lines.length === 2)
+    lines.push("  (emotionally quiet, even-keeled)");
+  return lines.join(`
+`);
 }
 function characterBlock(c) {
   const lines = [];
   lines.push(`## ${c.name}${c.isPrimary ? "" : " (supporting character)"}`);
-  const valence = c.emotions["valence"]?.value ?? 0;
-  const mood = c.emotions["mood"]?.value ?? 0;
-  const vDesc = describeValue(EMOTION_BY_KEY["valence"], valence);
-  const mDesc = describeValue(EMOTION_BY_KEY["mood"], mood);
-  lines.push(`- Energy (valence): ${vDesc.meaning}.`);
-  lines.push(`- Agreeableness (mood): ${mDesc.meaning}.`);
-  const sal = salientEmotions(c);
-  if (sal.length) {
-    const parts = sal.map(({ def, value }) => {
-      const d = describeValue(def, value);
-      return `${def.label.toLowerCase()} (${d.label})`;
-    });
-    lines.push(`- Felt right now: ${parts.join(", ")}.`);
-  } else {
-    lines.push("- Felt right now: emotionally quiet, even-keeled.");
+  if (c.demeanor && c.demeanor.trim()) {
+    lines.push(c.demeanor.trim());
+    lines.push("");
+    lines.push("Underneath (embody this \u2014 do not narrate or name it):");
   }
-  if (c.persona.trim()) {
-    lines.push(`- Who they are (drives their choices): ${c.persona.trim()}`);
-  }
+  lines.push(groundedReadout(c));
+  if (c.persona.trim())
+    lines.push(`  who they are: ${c.persona.trim()}`);
   for (const key of ["goal", "goals", "agenda", "toward_player", "attitude", "state"]) {
-    const v = c.sheet[key];
-    if (v && v.trim())
-      lines.push(`- ${key.replace(/_/g, " ")}: ${v.trim()}`);
+    const s = c.sheet[key];
+    if (s && s.trim())
+      lines.push(`  ${key.replace(/_/g, " ")}: ${s.trim()}`);
   }
   return lines.join(`
 `);
@@ -236,12 +315,12 @@ function buildDirective(run) {
 
 `);
   return [
-    "[Psyche \u2014 current emotional state]",
-    "Portray the following character(s) so their behavior, word choice, body",
-    "language and choices honestly express how they feel right now. Stronger",
-    "feelings should show more and be harder for them to hide; an all-consuming",
-    "feeling overrides their composure and pushes them to extremes. Never state",
-    "these values or mechanics out loud \u2014 just embody them in the prose.",
+    "[Psyche \u2014 how they are right now]",
+    "Portray each character below by ACTING their state \u2014 posture, tone, word",
+    "choice, what they reach for and what they hold back. Let stronger feelings",
+    "show more and break composure; where two pulls conflict, let it show as",
+    "hesitation, contradiction, push-and-pull. Embody it in the prose; never",
+    "recite or name these feelings, and never mention these notes.",
     "",
     blocks
   ].join(`
@@ -297,8 +376,8 @@ async function ensureInjectionEntry(characterId, characterName, userId) {
 // src/tools.ts
 var str = (a, k, d = "") => typeof a[k] === "string" ? a[k] : d;
 var num = (a, k) => {
-  const v = a[k];
-  return typeof v === "number" && Number.isFinite(v) ? v : null;
+  const v2 = a[k];
+  return typeof v2 === "number" && Number.isFinite(v2) ? v2 : null;
 };
 var bool = (a, k) => Boolean(a[k]);
 var EMOTION_LIST = EMOTION_KEYS.join(", ");
@@ -477,8 +556,8 @@ async function executeTool(run, name, args) {
         return `  ${def.key}: ${e.value.toFixed(3)} (${d.label}) [baseline ${e.baseline.toFixed(2)}]`;
       }).join(`
 `);
-      const sheet = Object.entries(c.sheet).map(([k, v]) => `  [${k}]
-  ${v.replace(/\n/g, `
+      const sheet = Object.entries(c.sheet).map(([k, v2]) => `  [${k}]
+  ${v2.replace(/\n/g, `
   `)}`).join(`
 `);
       return [
@@ -570,10 +649,10 @@ ${feelings}`
       if (value === null)
         return "set_emotion requires a numeric value.";
       backfillEmotions(c);
-      const v = clampForKind(key, value);
-      c.emotions[key].value = v;
+      const v2 = clampForKind(key, value);
+      c.emotions[key].value = v2;
       c.updatedAt = Date.now();
-      return `${c.id} ${key} set to ${v.toFixed(3)} (${describeValue(def, v).label}).`;
+      return `${c.id} ${key} set to ${v2.toFixed(3)} (${describeValue(def, v2).label}).`;
     }
     case "set_baseline": {
       const c = find(run, str(args, "character_id"));
@@ -732,17 +811,17 @@ async function seedRun(run, primary, cardContext, opts) {
     if (!def || typeof value !== "number" || !Number.isFinite(value))
       return;
     if (which === "baseline") {
-      const v = clampSeed(def, value, "baseline");
-      primary.emotions[key].baseline = v;
-      primary.emotions[key].value = v;
+      const v2 = clampSeed(def, value, "baseline");
+      primary.emotions[key].baseline = v2;
+      primary.emotions[key].value = v2;
     } else {
       primary.emotions[key].value = clampSeed(def, value, "opening");
     }
   };
-  for (const [k, v] of Object.entries(parsed.baselines ?? {}))
-    setOne(k, v, "baseline");
-  for (const [k, v] of Object.entries(parsed.opening_state ?? {}))
-    setOne(k, v, "value");
+  for (const [k, v2] of Object.entries(parsed.baselines ?? {}))
+    setOne(k, v2, "baseline");
+  for (const [k, v2] of Object.entries(parsed.opening_state ?? {}))
+    setOne(k, v2, "value");
   primary.updatedAt = Date.now();
   return `seed ${run.seed}: rolled persona + starting temperament.`;
 }
@@ -802,11 +881,11 @@ ${directive.trim()}` : ""
 }
 function emotionSummary(c) {
   const notable = EMOTIONS.filter((def) => {
-    const v = c.emotions[def.key]?.value ?? 0;
-    return def.kind === "bipolar" ? Math.abs(v) >= 0.15 : v >= 0.2;
+    const v2 = c.emotions[def.key]?.value ?? 0;
+    return def.kind === "bipolar" ? Math.abs(v2) >= 0.15 : v2 >= 0.2;
   }).map((def) => {
-    const v = c.emotions[def.key]?.value ?? 0;
-    return `${def.key} ${v.toFixed(2)} (${describeValue(def, v).label})`;
+    const v2 = c.emotions[def.key]?.value ?? 0;
+    return `${def.key} ${v2.toFixed(2)} (${describeValue(def, v2).label})`;
   }).join(", ");
   return notable || "all quiet";
 }
@@ -894,6 +973,68 @@ async function runPsycheAgent(run, transcript, cardContext, opts) {
     messages.push({ role: "user", content: resultParts });
   }
   return { rounds, toolCalls, finalNote };
+}
+function demeanorSystemPrompt() {
+  return [
+    AGENT_SENTINEL,
+    "You are Psyche's behavior synthesizer. Given a character's persona and their",
+    "current inner state (energy, agreeableness, what pulls them toward vs. away,",
+    "their power stance, and any inner tensions), write a tight DEMEANOR BRIEF: how",
+    "they are carrying themselves and behaving RIGHT NOW.",
+    "",
+    "Rules:",
+    "  \u2022 2-4 sentences, present tense, third person using their name.",
+    "  \u2022 Describe BEHAVIOR \u2014 posture, eye contact, tone, pacing, what they pursue,",
+    "    what they suppress \u2014 not a list of emotions. Weave the combination together:",
+    "    show how the strongest feeling is colored, fought, or amplified by the rest.",
+    "  \u2022 When there is a tension, make it visible as contradiction or push-and-pull.",
+    "  \u2022 Never name an emotion or a number; never describe plot events; do not write",
+    "    dialogue. Just the read of their manner.",
+    "",
+    "Return ONLY JSON mapping each character id to its brief:",
+    '{ "<id>": "<brief>", ... }'
+  ].join(`
+`);
+}
+async function synthesizeDemeanor(run, recentScene, opts) {
+  const present = Object.values(run.characters).filter((c) => c.present);
+  if (!present.length)
+    return;
+  const blocks = present.map((c) => [`### ${c.id} \u2014 ${c.name}`, c.persona ? `persona: ${c.persona}` : "", groundedReadout(c)].filter(Boolean).join(`
+`)).join(`
+
+`);
+  const messages = [
+    { role: "system", content: demeanorSystemPrompt() },
+    {
+      role: "user",
+      content: [
+        recentScene.trim() ? ["Recent scene (most recent last):", '"""', recentScene.trim(), '"""', ""].join(`
+`) : "",
+        "Characters and their current inner state:",
+        blocks,
+        "",
+        "Write each one's demeanor brief now. Return only the JSON."
+      ].filter(Boolean).join(`
+`)
+    }
+  ];
+  const res = await spindle.generate.quiet({
+    type: "quiet",
+    messages,
+    parameters: { temperature: 0.7 },
+    reasoning: { source: "off" },
+    signal: opts.signal,
+    userId: opts.userId
+  });
+  const parsed = extractJson(res.content ?? "");
+  if (!parsed)
+    return;
+  for (const c of present) {
+    const b = parsed[c.id];
+    if (typeof b === "string" && b.trim())
+      c.demeanor = b.trim();
+  }
 }
 
 // src/backend.ts
@@ -985,7 +1126,7 @@ function buildCardContext(char) {
     ["Scenario", c.scenario, 1000],
     ["Opening", c.first_mes, 1500]
   ];
-  return fields.filter(([, v]) => typeof v === "string" && v.trim()).map(([k, v, n]) => `${k}: ${cap(v.trim(), n)}`).join(`
+  return fields.filter(([, v2]) => typeof v2 === "string" && v2.trim()).map(([k, v2, n]) => `${k}: ${cap(v2.trim(), n)}`).join(`
 
 `);
 }
@@ -1059,6 +1200,14 @@ async function runAgentForChat(chatId, reply, userId) {
       const m = err instanceof Error && err.name === "AbortError" ? "timed out" : String(err);
       result.finalNote = `update failed (${m})`;
       spindle.log.error(`[psyche] ${char.name}: update pass failed \u2014 ${m}`);
+    }
+    try {
+      await synthesizeDemeanor(run, transcript.slice(-4000), {
+        signal: AbortSignal.timeout(config.agentTimeoutMs),
+        userId
+      });
+    } catch (err) {
+      spindle.log.error(`[psyche] demeanor synthesis failed: ${String(err)}`);
     }
     await saveRun(run);
     await refreshInjection(chatId, userId);
@@ -1171,6 +1320,7 @@ function snapshotRun(run) {
     present: c.present,
     identity: c.identity,
     persona: c.persona,
+    demeanor: c.demeanor ?? "",
     sheet: c.sheet,
     emotions: EMOTIONS.map((def) => {
       const e = c.emotions[def.key] ?? { value: 0, baseline: 0 };
@@ -1324,14 +1474,14 @@ spindle.onFrontendMessage(async (payload, userId) => {
     spindle.sendToFrontend({ type: "state", snapshot: null, note: `Action failed \u2014 check Psyche's permissions are granted. (${String(err)})` }, userId);
   }
 });
-function clampInt(v, min, max) {
-  const n = Math.round(Number(v));
+function clampInt(v2, min, max) {
+  const n = Math.round(Number(v2));
   if (!Number.isFinite(n))
     return min;
   return Math.max(min, Math.min(max, n));
 }
-function clampFloat(v, min, max) {
-  const n = Number(v);
+function clampFloat(v2, min, max) {
+  const n = Number(v2);
   if (!Number.isFinite(n))
     return min;
   return Math.max(min, Math.min(max, n));

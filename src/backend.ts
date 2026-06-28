@@ -12,7 +12,7 @@ import {
   isInjectionEntry,
   slugify,
 } from './run'
-import { seedRun, runPsycheAgent } from './agent'
+import { seedRun, runPsycheAgent, synthesizeDemeanor } from './agent'
 import {
   EMOTIONS,
   EMOTION_BY_KEY,
@@ -218,6 +218,16 @@ async function runAgentForChat(chatId: string, reply: string, userId?: string) {
       spindle.log.error(`[psyche] ${char.name}: update pass failed — ${m}`)
     }
 
+    // Weave the updated vector into present-tense behavioral briefs.
+    try {
+      await synthesizeDemeanor(run, transcript.slice(-4000), {
+        signal: AbortSignal.timeout(config.agentTimeoutMs),
+        userId,
+      })
+    } catch (err) {
+      spindle.log.error(`[psyche] demeanor synthesis failed: ${String(err)}`)
+    }
+
     await saveRun(run)
     await refreshInjection(chatId, userId) // push the new state into the prompt
 
@@ -358,6 +368,7 @@ function snapshotRun(run: RunState) {
     present: c.present,
     identity: c.identity,
     persona: c.persona,
+    demeanor: c.demeanor ?? '',
     sheet: c.sheet,
     emotions: EMOTIONS.map((def) => {
       const e = c.emotions[def.key] ?? { value: 0, baseline: 0 }

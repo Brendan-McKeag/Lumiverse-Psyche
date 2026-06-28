@@ -101,6 +101,33 @@ export const EMOTION_BY_KEY: Record<string, EmotionDef> = Object.fromEntries(
 
 export const EMOTION_KEYS = EMOTIONS.map((e) => e.key)
 
+/* ----------------------- behavioral grouping ----------------------- */
+/* How each unipolar feeling tends to move behavior, used to weave the injected
+ * guidance into approach / guard / aggression / etc. rather than a flat list. */
+export type BehaviorClass = 'approach' | 'guard' | 'down' | 'aggression' | 'assert' | 'yield' | 'other'
+
+const BEHAVIOR_CLASS: Record<string, BehaviorClass> = {
+  // drawn toward connection / engagement
+  affection: 'approach', attraction: 'approach', desire: 'approach', sexual_arousal: 'approach',
+  tenderness: 'approach', trust: 'approach', adoration: 'approach', gratitude: 'approach',
+  joy: 'approach', contentment: 'approach', excitement: 'approach', amusement: 'approach',
+  playfulness: 'approach', curiosity: 'approach', hope: 'approach', confidence: 'approach',
+  pride: 'approach', possessiveness: 'approach',
+  // braced, self-protective, shrinking
+  fear: 'guard', anxiety: 'guard', insecurity: 'guard', embarrassment: 'guard', shame: 'guard', guilt: 'guard',
+  // low, heavy, withdrawing
+  sadness: 'down', loneliness: 'down', grief: 'down', boredom: 'down', fatigue: 'down',
+  // pushing against, friction
+  anger: 'aggression', irritation: 'aggression', frustration: 'aggression', jealousy: 'aggression',
+  contempt: 'aggression', disgust: 'aggression', defiance: 'aggression',
+  // power stance
+  dominance: 'assert', submission: 'yield',
+}
+
+export function behaviorClass(key: string): BehaviorClass {
+  return BEHAVIOR_CLASS[key] ?? 'other'
+}
+
 /* ----------------------- pressure <-> value ------------------------ */
 // Largest magnitude we let a value reach, so atanh/-ln stay finite.
 const VMAX = 0.9995

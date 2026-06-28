@@ -24,6 +24,7 @@ interface Character {
   present: boolean
   identity: string
   persona: string
+  demeanor: string
   sheet: Record<string, string>
   emotions: Emotion[]
 }
@@ -65,6 +66,7 @@ export function setup(ctx: SpindleFrontendContext) {
     .ps-val { font-size:10.5px; color:var(--lumiverse-text-muted); text-align:right; }
     .ps-sheet { display:flex; flex-direction:column; gap:4px; }
     .ps-sheet .sk { font-size:11px; font-weight:600; }
+    .ps-demeanor { font-size:12px; font-style:italic; line-height:1.45; padding:8px 10px; border-left:2px solid var(--lumiverse-accent,#6c8cff); background:var(--lumiverse-fill-subtle); border-radius:var(--lumiverse-radius); }
   `)
 
   const tab = ctx.ui.registerDrawerTab({
@@ -92,6 +94,7 @@ export function setup(ctx: SpindleFrontendContext) {
           <label class="ps-row ps-muted"><input type="checkbox" class="ps-present" /> present</label>
         </div>
         <div class="ps-muted ps-d-identity"></div>
+        <div class="ps-demeanor" style="display:none"></div>
         <h4 class="ps-h">Hidden persona</h4>
         <textarea class="ps-ta ps-persona" placeholder="The character's private driver."></textarea>
         <div class="ps-row"><button class="ps-btn ps-save-persona">Save persona</button></div>
@@ -134,6 +137,7 @@ export function setup(ctx: SpindleFrontendContext) {
   const detail = q<HTMLElement>('.ps-detail')
   const dName = q<HTMLElement>('.ps-d-name')
   const dIdentity = q<HTMLElement>('.ps-d-identity')
+  const demeanorEl = q<HTMLElement>('.ps-demeanor')
   const presentEl = q<HTMLInputElement>('.ps-present')
   const personaEl = q<HTMLTextAreaElement>('.ps-persona')
   const emosEl = q<HTMLElement>('.ps-emos')
@@ -208,6 +212,12 @@ export function setup(ctx: SpindleFrontendContext) {
     detail.style.display = 'flex'
     dName.textContent = `${c.name}${c.isPrimary ? ' (primary)' : ''}`
     dIdentity.textContent = c.identity || ''
+    if (c.demeanor && c.demeanor.trim()) {
+      demeanorEl.textContent = c.demeanor
+      demeanorEl.style.display = 'block'
+    } else {
+      demeanorEl.style.display = 'none'
+    }
     presentEl.checked = c.present
     personaEl.value = c.persona
 
