@@ -201,6 +201,7 @@ export function setup(ctx: SpindleFrontendContext) {
   const dirEl = q<HTMLTextAreaElement>('.ps-dir')
   const connEl = q<HTMLSelectElement>('.ps-conn')
   let connOptions: { id: string; name: string; provider: string; model: string }[] = []
+  let connError = ''
   let agentConnId = ''
   const dbgOut = q<HTMLElement>('.ps-dbg-out')
   const dbgMeta = q<HTMLElement>('.ps-dbg-meta')
@@ -358,6 +359,13 @@ export function setup(ctx: SpindleFrontendContext) {
     if (agentConnId && !connOptions.some((c) => c.id === agentConnId)) {
       opts.push(`<option value="${esc(agentConnId)}" selected>(saved connection ${esc(agentConnId)})</option>`)
     }
+    // Say WHY the list is empty rather than showing a bare default.
+    if (!connOptions.length) {
+      const why = connError
+        ? `couldn't load connections: ${connError}`
+        : 'no connections loaded yet — reopen this tab to retry'
+      opts.push(`<option value="" disabled>(${esc(why)})</option>`)
+    }
     connEl.innerHTML = opts.join('')
     connEl.value = agentConnId
   }
@@ -407,6 +415,10 @@ export function setup(ctx: SpindleFrontendContext) {
     requestState()
     requestDebug()
     requestEngine()
+    // Re-fetch on every activation: the setup-time request can race the backend
+    // worker coming up (or the generation permission being granted) and land
+    // empty — without a retry the model dropdown would stay empty forever.
+    ctx.sendToBackend({ type: 'get_connections' })
   })
   ctx.events.on('CHAT_SWITCHED', () => {
     selectedId = null
@@ -529,6 +541,7 @@ export function setup(ctx: SpindleFrontendContext) {
       }
       case 'connections': {
         connOptions = Array.isArray(p.connections) ? p.connections : []
+        connError = typeof p.error === 'string' ? p.error : ''
         renderConnections()
         break
       }

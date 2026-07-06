@@ -1835,13 +1835,17 @@ spindle.onFrontendMessage(async (payload, userId) => {
         break;
       case "get_connections": {
         let connections = [];
+        let error;
         try {
+          if (!spindle.connections?.list)
+            throw new Error("host does not expose the connections API");
           const list = await spindle.connections.list(userId);
           connections = list.map((c) => ({ id: c.id, name: c.name, provider: c.provider, model: c.model }));
         } catch (err) {
-          spindle.log.warn(`[psyche] could not list connections: ${String(err)}`);
+          error = String(err instanceof Error ? err.message : err);
+          spindle.log.warn(`[psyche] could not list connections: ${error}`);
         }
-        spindle.sendToFrontend({ type: "connections", connections }, userId);
+        spindle.sendToFrontend({ type: "connections", connections, error }, userId);
         break;
       }
       case "get_state": {

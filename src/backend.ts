@@ -571,15 +571,21 @@ spindle.onFrontendMessage(async (payload: any, userId) => {
 
     case 'get_connections': {
       // The available connection profiles, so the panel can route the engine to
-      // a different model than the one writing the prose.
+      // a different model than the one writing the prose. Surface a failure to
+      // the panel instead of silently sending an empty list — the common causes
+      // (generation permission not granted yet, host too old for the
+      // connections API) are all fixable by the user.
       let connections: { id: string; name: string; provider: string; model: string }[] = []
+      let error: string | undefined
       try {
+        if (!spindle.connections?.list) throw new Error('host does not expose the connections API')
         const list = await spindle.connections.list(userId)
         connections = list.map((c) => ({ id: c.id, name: c.name, provider: c.provider, model: c.model }))
       } catch (err) {
-        spindle.log.warn(`[psyche] could not list connections: ${String(err)}`)
+        error = String(err instanceof Error ? err.message : err)
+        spindle.log.warn(`[psyche] could not list connections: ${error}`)
       }
-      spindle.sendToFrontend({ type: 'connections', connections }, userId)
+      spindle.sendToFrontend({ type: 'connections', connections, error }, userId)
       break
     }
 

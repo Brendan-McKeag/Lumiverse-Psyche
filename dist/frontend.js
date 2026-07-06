@@ -156,6 +156,7 @@ function setup(ctx) {
   const dirEl = q(".ps-dir");
   const connEl = q(".ps-conn");
   let connOptions = [];
+  let connError = "";
   let agentConnId = "";
   const dbgOut = q(".ps-dbg-out");
   const dbgMeta = q(".ps-dbg-meta");
@@ -269,6 +270,10 @@ function setup(ctx) {
     if (agentConnId && !connOptions.some((c) => c.id === agentConnId)) {
       opts.push(`<option value="${esc(agentConnId)}" selected>(saved connection ${esc(agentConnId)})</option>`);
     }
+    if (!connOptions.length) {
+      const why = connError ? `couldn't load connections: ${connError}` : "no connections loaded yet — reopen this tab to retry";
+      opts.push(`<option value="" disabled>(${esc(why)})</option>`);
+    }
     connEl.innerHTML = opts.join("");
     connEl.value = agentConnId;
   }
@@ -312,6 +317,7 @@ ${t.response}`;
     requestState();
     requestDebug();
     requestEngine();
+    ctx.sendToBackend({ type: "get_connections" });
   });
   ctx.events.on("CHAT_SWITCHED", () => {
     selectedId = null;
@@ -435,6 +441,7 @@ ${t.response}`;
       }
       case "connections": {
         connOptions = Array.isArray(p.connections) ? p.connections : [];
+        connError = typeof p.error === "string" ? p.error : "";
         renderConnections();
         break;
       }
