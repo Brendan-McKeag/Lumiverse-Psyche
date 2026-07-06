@@ -3,8 +3,10 @@ declare const spindle: import('lumiverse-spindle-types').SpindleAPI
 import {
   RunState,
   CharacterState,
+  PlayerProfile,
   emptyRun,
   runPath,
+  playerProfilePath,
   newCharacter,
   backfillEmotions,
   buildDirective,
@@ -40,6 +42,8 @@ interface Config {
   agentTimeoutMs: number
   /** connection id the out-of-band engine calls use; '' = same as the prose model */
   agentConnectionId: string
+  /** gate for the energy-matched delivery lines + ENERGY preamble (human texture) */
+  humanTexture: boolean
 }
 
 const DEFAULT_CONFIG: Config = {
@@ -49,6 +53,7 @@ const DEFAULT_CONFIG: Config = {
   directive: '',
   agentTimeoutMs: 90000,
   agentConnectionId: '',
+  humanTexture: true,
 }
 const CONFIG_PATH = 'config.json'
 
@@ -61,7 +66,10 @@ const observers = new Map<string, ReturnType<typeof spindle.generate.observe>>()
 /* ----------------------------- storage ----------------------------- */
 
 async function loadConfig() {
-  config = await spindle.storage.getJson<Config>(CONFIG_PATH, { fallback: { ...DEFAULT_CONFIG } })
+  // Spread over the defaults so a config saved by an older version gains any
+  // keys added since (getJson returns the stored object verbatim).
+  const stored = await spindle.storage.getJson<Partial<Config>>(CONFIG_PATH, { fallback: {} })
+  config = { ...DEFAULT_CONFIG, ...stored }
 }
 async function saveConfig() {
   await spindle.storage.setJson(CONFIG_PATH, config, { indent: 2 })
@@ -74,6 +82,23 @@ async function loadRun(chatId: string): Promise<RunState> {
 async function saveRun(run: RunState) {
   run.updatedAt = Date.now()
   await spindle.storage.setJson(runPath(run.chatId), run, { indent: 2 })
+}
+
+/* The per-card profile of the HUMAN behind the player-character (interests,
+ * goals, kinks, personality). Steering context only — the player never gets
+ * emotion stats. Empty string = no profile, nothing injected. */
+async function loadPlayerProfile(characterId: string): Promise<string> {
+  const p = await spindle.storage.getJson<PlayerProfile | null>(playerProfilePath(characterId), {
+    fallback: null,
+  })
+  return p?.profile ?? ''
+}
+async function savePlayerProfile(characterId: string, profile: string) {
+  await spindle.storage.setJson(
+    playerProfilePath(characterId),
+    { profile, updatedAt: Date.now() } satisfies PlayerProfile,
+    { indent: 2 },
+  )
 }
 
 /* ----------------------------- debug ------------------------------- *
@@ -253,14 +278,17 @@ async function runAgentForChat(chatId: string, reply: string, userId?: string) {
     }
 
     // Stage 2 — ruminate on how the updated emotional state reshapes behavior,
-    // and produce the directive the prose writer will follow next.
+    // and produce the directive the prose writer will follow next. The player
+    // profile rides along so move selection can aim for the goal-intersection.
     emitEngine(chatId, 'running', 'ruminating', userId)
+    const playerProfile = await loadPlayerProfile(char.id).catch(() => '')
     try {
       await ruminate(run, transcript.slice(-6000), {
         signal: AbortSignal.timeout(config.agentTimeoutMs),
         userId,
         connectionId: config.agentConnectionId || undefined,
         onTrace: (t) => (dbg.rumination = capTrace(t)),
+        playerProfile,
       })
     } catch (err) {
       spindle.log.error(`[psyche] rumination failed: ${String(err)}`)
@@ -273,7 +301,11 @@ async function runAgentForChat(chatId: string, reply: string, userId?: string) {
     // traces (merging so steps that did not run this turn keep their last capture).
     dbg.injection = {
       at: Date.now(),
-      directive: capText(buildDirective(run) ?? '(nothing injected — not seeded or no one present)', DBG_REQ_CAP),
+      directive: capText(
+        buildDirective(run, { playerProfile, humanTexture: config.humanTexture }) ??
+          '(nothing injected — not seeded or no one present)',
+        DBG_REQ_CAP,
+      ),
     }
     try {
       const prev = await loadDebug(chatId)
@@ -409,7 +441,10 @@ async function refreshInjection(chatId: string, userId?: string) {
     const entryId = await ensureInjectionEntry(char.id, char.name, userId)
     if (!entryId) return
     const run = await loadRun(chatId).catch(() => null)
-    const directive = (run && buildDirective(run)) || '(no active emotional state)'
+    const playerProfile = await loadPlayerProfile(char.id).catch(() => '')
+    const directive =
+      (run && buildDirective(run, { playerProfile, humanTexture: config.humanTexture })) ||
+      '(no active emotional state)'
     await spindle.world_books.entries.update(entryId, { content: directive }, userId)
     if (!loggedInject) {
       loggedInject = true
@@ -460,6 +495,7 @@ function snapshotRun(run: RunState) {
     persona: c.persona,
     demeanor: c.demeanor ?? '',
     intent: c.intent ?? '',
+    move: c.move ?? '',
     canon: c.canon ?? '',
     goals: c.goals ?? [],
     sheet: c.sheet,
@@ -527,6 +563,7 @@ spindle.onFrontendMessage(async (payload: any, userId) => {
           payload.config?.agentConnectionId === undefined
             ? config.agentConnectionId
             : String(payload.config.agentConnectionId ?? ''),
+        humanTexture: Boolean(payload.config?.humanTexture ?? config.humanTexture),
       }
       await saveConfig()
       spindle.sendToFrontend({ type: 'config', config }, userId)
@@ -624,6 +661,28 @@ spindle.onFrontendMessage(async (payload: any, userId) => {
         await saveRun(run)
       }
       await sendState(chatId, userId)
+      break
+    }
+
+    case 'get_player_profile': {
+      const chatId = await activeChatId(payload.chatId, userId)
+      const char = chatId ? await characterForChat(chatId, userId) : null
+      const profile = char ? await loadPlayerProfile(char.id) : ''
+      spindle.sendToFrontend(
+        { type: 'player_profile', characterId: char?.id ?? null, profile },
+        userId,
+      )
+      break
+    }
+
+    case 'save_player_profile': {
+      const chatId = await activeChatId(payload.chatId, userId)
+      if (!chatId) break
+      const char = await characterForChat(chatId, userId)
+      if (!char) break
+      await savePlayerProfile(char.id, String(payload.profile ?? ''))
+      // Reaches the very next reply: the injection is refreshed by sendState.
+      await sendState(chatId, userId, 'Player profile saved.')
       break
     }
 

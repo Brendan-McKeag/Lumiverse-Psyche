@@ -304,6 +304,11 @@ function updateSystemPrompt(directive: string): string {
     '    who is present (set_present). Give them canon + goals too.',
     '  • Occasionally nudge a baseline (set_baseline) when a lasting change of',
     '    temperament is earned — not every turn.',
+    '  • GOAL RESONANCE: when the player\'s actions genuinely advance a character\'s',
+    '    goals or desires, register it — satisfaction, joy, warmth, trust move up;',
+    '    investment deepens. When their goals are stalled or trampled, register that',
+    '    too (frustration, boredom, withdrawal). Goal-relevant beats are among the',
+    '    strongest stimuli there are.',
     '',
     'CANON IS LAW. Once a fact is in a character\'s canon it is FIXED truth: never',
     'contradict or quietly retcon it — only extend it, or rarely refine wording without',
@@ -484,21 +489,38 @@ function ruminateSystemPrompt(): string {
     'reacts to that read; a small shift in the player\'s manner can land harder than',
     'a sentence of content.',
     '',
-    'Output two fields per character:',
+    'Weigh the scene against each character\'s goals: is the player serving them,',
+    'ignoring them, or blocking them? Served goals → visible pleasure and rising',
+    'initiative. Blocked or ignored goals → pressure: they steer, bargain, push back,',
+    'or pull away. Never let them mirror the player\'s agenda at the expense of their',
+    'own.',
+    '',
+    'When a PLAYER PROFILE is provided, you also know what the PLAYER is here for.',
+    'When choosing each character\'s move, prefer moves that advance the character\'s',
+    'own goals ALONG a line the player\'s interests would enjoy — that intersection is',
+    'the best move on the board. Do not force it; a character never abandons their own',
+    'agenda or nature to service the profile, and never acknowledges it in-fiction.',
+    '',
+    'Output three fields per character:',
     '  directive — 3-5 sentences of concrete behavioral direction for the prose writer:',
     '    what this character DOES this turn given how they feel — manner, tone, what',
     '    they pursue, what they resist or withhold, the move they make, how the feelings',
-    '    reshape their choices and voice away from baseline. Write actions and bearing,',
-    '    not feelings; no emotion labels, no numbers.',
+    '    reshape their choices and voice away from baseline. Include the ENERGY of their',
+    '    delivery: how much they say, how much effort it carries, whether they engage or',
+    '    withdraw. Write actions and bearing, not feelings; no emotion labels, no numbers.',
     '  intent — 1-2 sentences: what they want this moment and the concrete move they are',
     '    likely to make to get it. THEIR agenda, driving the scene — not the player\'s.',
+    '  move — 1 sentence: one concrete story-driving contribution they make or set up',
+    '    this turn (a plan, proposal, complication, revelation, callback) — THEIR',
+    '    addition to the story, not a reaction to the player. May be empty only when',
+    '    their state says they\'d withhold (sulking, drained, guarded).',
     '',
     'Honor an OVERRIDING STATE at full force: if a feeling is all-consuming the character',
     'is run by it and breaks from their usual self — do NOT moderate it back toward their',
     'persona or composure. Canon facts stay fixed truth. Do not write dialogue or narrate',
     'events that have not happened yet.',
     '',
-    'Return ONLY JSON: { "<id>": { "directive": "<...>", "intent": "<...>" }, ... }',
+    'Return ONLY JSON: { "<id>": { "directive": "<...>", "intent": "<...>", "move": "<...>" }, ... }',
   ].join('\n')
 }
 
@@ -510,7 +532,14 @@ function ruminateSystemPrompt(): string {
 export async function ruminate(
   run: RunState,
   recentScene: string,
-  opts: { signal?: AbortSignal; userId?: string; connectionId?: string; onTrace?: TraceFn },
+  opts: {
+    signal?: AbortSignal
+    userId?: string
+    connectionId?: string
+    onTrace?: TraceFn
+    /** the human's per-character profile — steering context for move selection */
+    playerProfile?: string
+  },
 ): Promise<void> {
   const present = Object.values(run.characters).filter((c) => c.present)
   if (!present.length) return
@@ -536,10 +565,19 @@ export async function ruminate(
       role: 'user',
       content: [
         recentScene.trim() ? ['Recent scene (most recent last):', '"""', recentScene.trim(), '"""', ''].join('\n') : '',
+        (opts.playerProfile ?? '').trim()
+          ? [
+              'PLAYER PROFILE (what the human is here for — direct the scene toward it when it fits):',
+              '"""',
+              (opts.playerProfile ?? '').trim(),
+              '"""',
+              '',
+            ].join('\n')
+          : '',
         'Characters (persona, canon, goals, current emotional state):',
         blocks,
         '',
-        'Ruminate, then write each one\'s directive + intent. Return only the JSON.',
+        'Ruminate, then write each one\'s directive + intent + move. Return only the JSON.',
       ]
         .filter(Boolean)
         .join('\n'),
@@ -574,10 +612,12 @@ export async function ruminate(
       if (entry.trim()) c.demeanor = entry.trim()
       continue
     }
-    const o = entry as { directive?: unknown; demeanor?: unknown; intent?: unknown }
+    const o = entry as { directive?: unknown; demeanor?: unknown; intent?: unknown; move?: unknown }
     const directive = typeof o.directive === 'string' ? o.directive : typeof o.demeanor === 'string' ? o.demeanor : ''
     if (directive.trim()) c.demeanor = directive.trim()
     if (typeof o.intent === 'string' && o.intent.trim()) c.intent = o.intent.trim()
+    // move is refreshed every rumination — a stale contribution must not linger
+    c.move = typeof o.move === 'string' && o.move.trim() ? o.move.trim() : undefined
   }
 }
 

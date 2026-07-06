@@ -47,6 +47,29 @@ description and a one-line summary. Everything else is rolled per run.
   take initiative, steer the scene, set conditions, and push back or refuse —
   pursuing their own agenda, not mirroring the player.
 
+- **An invested partner, not a service provider.** Every turn the rumination
+  stage also emits a **move** — one concrete story-driving contribution of the
+  character's own (a plan, proposal, complication, callback). A live
+  **investment register** derived from the affect vector tells the writer how
+  much the character is enjoying the scene: when the player serves their goals
+  they visibly light up, give more, and initiate; when their goals are ignored
+  they don't fake enthusiasm — they push their agenda or disengage. Enjoyment
+  is earned, and it shows.
+
+- **A player profile (per character card).** A freeform note about the **human
+  behind the player-character** — interests, goals, kinks, hard lines — edited
+  in the panel and shared by every chat with that character. It softly steers
+  scenes toward what you're here for, through the characters' own in-fiction
+  choices; they never see it, never mention it, and never break who they are to
+  serve it. The player is never given emotion stats — feelings stay the
+  characters' alone.
+
+- **Energy-matched delivery.** Deterministic `delivery:` lines translate the
+  state into how much the character says and how much effort it carries —
+  drained or sulking reads short and flat, lit-up reads quick and expansive —
+  so replies stop being uniformly polished essays regardless of mood.
+  Toggleable ("Human texture" in settings).
+
 - **Multi-character & full CRUD.** The card character is the primary target, but
   the engine introduces, advances, and retires supporting characters as the
   story brings them in. Every present character's state is tracked independently.
@@ -89,6 +112,7 @@ before publishing.
 
 ## Settings
 
-In the **Psyche** drawer tab: enable/disable, engine rounds per turn, decay rate,
-an optional engine directive (tone steering), reroll seed, reset run, and
-per-character persona/sheet/presence editing.
+In the **Psyche** drawer tab: enable/disable, human texture (energy-matched
+replies), engine rounds per turn, decay rate, an optional engine directive
+(tone steering), reroll seed, reset run, per-character persona/sheet/presence
+editing, and the player profile for the current character card.

@@ -26,6 +26,7 @@ interface Character {
   persona: string
   demeanor: string
   intent: string
+  move: string
   canon: string
   goals: string[]
   sheet: Record<string, string>
@@ -106,6 +107,7 @@ export function setup(ctx: SpindleFrontendContext) {
         <div class="ps-muted ps-d-identity"></div>
         <div class="ps-demeanor" style="display:none"></div>
         <div class="ps-muted ps-intent" style="display:none"></div>
+        <div class="ps-muted ps-intent ps-move" style="display:none"></div>
 
         <h4 class="ps-h">Goals &amp; desires (one per line)</h4>
         <textarea class="ps-ta ps-goals" placeholder="What this character is pursuing, in their own interest."></textarea>
@@ -131,6 +133,13 @@ export function setup(ctx: SpindleFrontendContext) {
       </div>
 
       <div class="ps-section">
+        <h4 class="ps-h">Player — the human behind the player-character</h4>
+        <div class="ps-muted">Shared by every chat with this character. Steers scenes toward what you're here for — characters never see or mention it, and never break who they are to serve it.</div>
+        <textarea class="ps-ta ps-player" style="min-height:100px" placeholder="Your interests, goals, kinks, hard lines, the kind of scenes you're hoping for with this character…"></textarea>
+        <div class="ps-row"><button class="ps-btn ps-save-player">Save player profile</button></div>
+      </div>
+
+      <div class="ps-section">
         <h4 class="ps-h">Run</h4>
         <div class="ps-muted ps-seed"></div>
         <div class="ps-row">
@@ -143,6 +152,7 @@ export function setup(ctx: SpindleFrontendContext) {
       <div class="ps-section">
         <h4 class="ps-h">Settings</h4>
         <label class="ps-row"><input type="checkbox" class="ps-en" /> Enabled</label>
+        <label class="ps-row"><input type="checkbox" class="ps-texture" /> Human texture (energy-matched replies — flat moods read flat)</label>
         <div><span class="ps-muted">Engine rounds per turn</span><input type="number" class="ps-input ps-rounds" min="1" max="20" /></div>
         <div><span class="ps-muted">Decay rate (0–1, relax toward baseline)</span><input type="number" class="ps-input ps-decay" min="0" max="1" step="0.01" /></div>
         <div><span class="ps-muted">Engine directive (optional)</span><textarea class="ps-ta ps-dir" placeholder="e.g. Slow-burn; keep characters guarded until trust is earned."></textarea></div>
@@ -172,7 +182,9 @@ export function setup(ctx: SpindleFrontendContext) {
   const dName = q<HTMLElement>('.ps-d-name')
   const dIdentity = q<HTMLElement>('.ps-d-identity')
   const demeanorEl = q<HTMLElement>('.ps-demeanor')
-  const intentEl = q<HTMLElement>('.ps-intent')
+  const intentEl = q<HTMLElement>('.ps-intent:not(.ps-move)')
+  const moveEl = q<HTMLElement>('.ps-move')
+  const playerEl = q<HTMLTextAreaElement>('.ps-player')
   const presentEl = q<HTMLInputElement>('.ps-present')
   const personaEl = q<HTMLTextAreaElement>('.ps-persona')
   const goalsEl = q<HTMLTextAreaElement>('.ps-goals')
@@ -183,6 +195,7 @@ export function setup(ctx: SpindleFrontendContext) {
   const seedEl = q<HTMLElement>('.ps-seed')
   const activity = q<HTMLElement>('.ps-activity')
   const enEl = q<HTMLInputElement>('.ps-en')
+  const textureEl = q<HTMLInputElement>('.ps-texture')
   const roundsEl = q<HTMLInputElement>('.ps-rounds')
   const decayEl = q<HTMLInputElement>('.ps-decay')
   const dirEl = q<HTMLTextAreaElement>('.ps-dir')
@@ -269,6 +282,12 @@ export function setup(ctx: SpindleFrontendContext) {
     } else {
       intentEl.style.display = 'none'
     }
+    if (c.move && c.move.trim()) {
+      moveEl.textContent = `→ move: ${c.move}`
+      moveEl.style.display = 'block'
+    } else {
+      moveEl.style.display = 'none'
+    }
     presentEl.checked = c.present
     personaEl.value = c.persona
     goalsEl.value = (c.goals ?? []).join('\n')
@@ -326,6 +345,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const { characterId } = ctx.getActiveChat()
     void characterId
     ctx.sendToBackend({ type: 'get_state' })
+    ctx.sendToBackend({ type: 'get_player_profile' })
   }
 
   function renderConnections() {
@@ -420,6 +440,9 @@ export function setup(ctx: SpindleFrontendContext) {
     const c = selected()
     if (c) ctx.sendToBackend({ type: 'save_canon', characterId: c.id, canon: canonEl.value })
   })
+  q('.ps-save-player').addEventListener('click', () => {
+    ctx.sendToBackend({ type: 'save_player_profile', profile: playerEl.value })
+  })
   q('.ps-addsec').addEventListener('click', () => {
     const c = selected()
     const name = newSecEl.value.trim()
@@ -456,6 +479,7 @@ export function setup(ctx: SpindleFrontendContext) {
         decayRate: Number(decayEl.value),
         directive: dirEl.value,
         agentConnectionId: connEl.value,
+        humanTexture: textureEl.checked,
       },
     })
   })
@@ -488,9 +512,14 @@ export function setup(ctx: SpindleFrontendContext) {
         setEngine(p.state, p.stage)
         break
       }
+      case 'player_profile': {
+        playerEl.value = typeof p.profile === 'string' ? p.profile : ''
+        break
+      }
       case 'config': {
         const c = p.config ?? {}
         enEl.checked = c.enabled !== false
+        textureEl.checked = c.humanTexture !== false
         roundsEl.value = String(c.maxRounds ?? 8)
         decayEl.value = String(c.decayRate ?? 0.12)
         dirEl.value = c.directive ?? ''

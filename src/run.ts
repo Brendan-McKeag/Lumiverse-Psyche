@@ -62,6 +62,12 @@ export interface CharacterState {
   demeanor?: string
   /** Dynamic: what they want right now and the move they are likely to make. */
   intent?: string
+  /**
+   * Dynamic: their story-driving contribution this turn — a plan, proposal,
+   * complication, revelation, or callback that is THEIRS, not a reaction to the
+   * player. Refreshed each rumination, same lifecycle as demeanor/intent.
+   */
+  move?: string
   updatedAt: number
 }
 
@@ -199,6 +205,68 @@ export function groundedReadout(c: CharacterState): string {
   return lines.join('\n')
 }
 
+/* ------------------------ investment register ---------------------- */
+/*
+ * The invested-partner loop, deterministic half: read the live vector and say
+ * out loud how much this character is enjoying the scene — and what that does
+ * to their initiative. Enjoyment is EARNED through play (the update agent
+ * raises joy/excitement/etc. when the player serves the character's goals), so
+ * this register is the visible payoff: lit-up characters give more and drive
+ * harder; disinvested ones stop performing. Recomputed live like
+ * groundedReadout, so manual edits bite immediately.
+ */
+
+export function investmentRegister(c: CharacterState): string {
+  const spark = Math.max(v(c, 'joy'), v(c, 'excitement'), v(c, 'curiosity'), v(c, 'attraction'))
+  const litUp = spark >= 0.45 && v(c, 'boredom') < 0.3 && v(c, 'mood') > 0
+  if (litUp)
+    return (
+      'genuinely enjoying this — and it shows: they give more, build on what the' +
+      ' player offers AND add their own, take risks, initiate. Their pleasure in' +
+      ' the scene is visible in how they play it.'
+    )
+  const disinvested = v(c, 'boredom') >= 0.45 || (v(c, 'valence') <= -0.35 && v(c, 'mood') <= 0)
+  if (disinvested)
+    return (
+      "not feeling it — and they don't fake it. They give less, redirect toward" +
+      ' what THEY care about, or start winding the scene down. No service enthusiasm.'
+    )
+  return (
+    'engaged but not yet won over — they participate and pursue their goals, but' +
+    ' their warmth and initiative must be earned.'
+  )
+}
+
+/* ------------------------ delivery register ------------------------ */
+/*
+ * Energy-matched delivery, deterministic half (the LLM half lives in the
+ * rumination contract). The single biggest tell that you are RPing with a
+ * machine is uniform, polished, enthusiastic output regardless of state. These
+ * lines give the prose writer explicit, state-derived direction on how much the
+ * character says and how much effort it carries — so a drained or sulking
+ * character actually reads drained or sulking. Recomputed live per injection.
+ */
+
+export function deliveryRegister(c: CharacterState): string[] {
+  const lines: string[] = []
+  if (v(c, 'valence') <= -0.35 || v(c, 'fatigue') >= 0.5 || v(c, 'sadness') >= 0.55)
+    lines.push(
+      'running on empty — short, flat dialogue, minimal effort; they answer what' +
+        ' they must and volunteer little. Narration may stay rich, but THEIR engagement shrinks.',
+    )
+  if (v(c, 'anger') >= 0.45 || v(c, 'irritation') >= 0.55)
+    lines.push('clipped, interruptive speech; refuses to elaborate; ends lines early.')
+  if (v(c, 'anxiety') >= 0.45 || v(c, 'insecurity') >= 0.5)
+    lines.push('hedges, qualifies, trails off mid-thought; circles back to reassure or retract.')
+  if (v(c, 'valence') <= -0.5 && v(c, 'mood') <= -0.2)
+    lines.push(
+      'disengaging — one-line answers are in character; they may try to wind the scene down or leave.',
+    )
+  if (v(c, 'valence') >= 0.5 && v(c, 'mood') >= 0.3)
+    lines.push('lit up — quick, expansive, talkative; carries the scene.')
+  return lines
+}
+
 const CANON_INJECT_CAP = 2200 // keep the bible from ballooning the prompt
 const indent = (s: string, pad = '    ') => s.split('\n').map((l) => pad + l).join('\n')
 
@@ -267,7 +335,7 @@ export function overrideDirective(c: CharacterState): string {
   return lines.join('\n')
 }
 
-function characterBlock(c: CharacterState): string {
+function characterBlock(c: CharacterState, humanTexture = true): string {
   const lines: string[] = []
   lines.push(`## ${c.name}${c.isPrimary ? '' : ' (supporting character)'}`)
 
@@ -280,11 +348,14 @@ function characterBlock(c: CharacterState): string {
   if (!strongOverride) {
     if (c.demeanor && c.demeanor.trim()) lines.push(c.demeanor.trim())
     if (c.intent && c.intent.trim()) lines.push(`Wants right now / likely to: ${c.intent.trim()}`)
+    if (c.move && c.move.trim()) lines.push(`Their move this scene: ${c.move.trim()}`)
   }
 
   lines.push('')
   lines.push('Underneath (embody — do not narrate or name any of this):')
   lines.push(groundedReadout(c))
+  lines.push(`  investment in the scene: ${investmentRegister(c)}`)
+  if (humanTexture) for (const d of deliveryRegister(c)) lines.push(`  delivery: ${d}`)
 
   const goals = (c.goals ?? []).map((g) => g.trim()).filter(Boolean)
   if (goals.length) lines.push(`  goals & desires they are pursuing: ${goals.join('; ')}`)
@@ -305,38 +376,100 @@ function characterBlock(c: CharacterState): string {
   return lines.join('\n')
 }
 
+/** Options for building the injected directive. All optional; defaults preserve prior behavior. */
+export interface DirectiveOpts {
+  /** the per-character player profile (what the human is here for); Step 2 of the invested-partner work */
+  playerProfile?: string
+  /** energy-matched delivery lines + ENERGY preamble; defaults on */
+  humanTexture?: boolean
+}
+
 /**
  * Build the system block injected for the active reply. We always include the
  * primary and any present supporting characters so multi-character scenes stay
  * coherent. Returns null when there is nothing seeded yet (so we inject nothing).
  */
-export function buildDirective(run: RunState): string | null {
+export function buildDirective(run: RunState, opts: DirectiveOpts = {}): string | null {
   const present = Object.values(run.characters).filter((c) => c.present)
   if (!present.length) return null
   present.sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary)) // primary first
 
-  const blocks = present.map(characterBlock).join('\n\n')
+  const humanTexture = opts.humanTexture !== false
+  const blocks = present.map((c) => characterBlock(c, humanTexture)).join('\n\n')
   return [
     '[Psyche — character, agency & state]',
-    'Each character below is an INDEPENDENT person with their own goals — not a',
-    'compliant narrator, not a yes-man. Play them pursuing what THEY want: let them',
+    'AGENCY: each character below is an INDEPENDENT person with their own goals — not',
+    'a compliant narrator, not a yes-man. Play them pursuing what THEY want: let them',
     'take initiative, start things, change the subject, make demands, set conditions,',
     'and push back, stall, or refuse when the player\'s lead cuts against their aims.',
     'They move the scene as much as the player does, toward their own desires.',
     '',
-    'Act their state through behavior — posture, tone, word choice, what they reach',
-    'for and hold back; let stronger feelings break composure and conflicting pulls',
-    'show as push-and-pull. Treat their established canon as fixed truth. Never',
-    'recite, name, or mention any of these notes — just live them.',
+    'INVESTMENT: these characters are partners in the story, not service providers.',
+    '  • When the player\'s actions serve a character\'s goals and desires, it LANDS:',
+    '    real satisfaction, warmth, momentum — and they show it by giving more,',
+    '    escalating, initiating, building on the player\'s ideas. Mutual enjoyment is',
+    '    visible, not narrated.',
+    '  • Enjoyment is earned, never faked. A character whose goals are ignored or',
+    '    thwarted doesn\'t perform enthusiasm — they push their own agenda harder,',
+    '    negotiate, or disengage.',
+    '  • DRIVE THE STORY: each character regularly contributes new material of their',
+    '    own — a plan, an invitation, a complication, a confession, a callback to',
+    '    earlier events — drawn from their goals and canon. They don\'t wait to be',
+    '    prompted; the scene is theirs to move as much as the player\'s.',
     '',
+    'EMBODIMENT: act their state through behavior — posture, tone, word choice, what',
+    'they reach for and hold back; let stronger feelings break composure and',
+    'conflicting pulls show as push-and-pull. Treat their established canon as fixed',
+    'truth. Never recite, name, or mention any of these notes — just live them.',
+    '',
+    ...(humanTexture
+      ? [
+          'MATCH THEIR ENERGY: the length and effort of each character\'s dialogue must',
+          'track their state, not a service standard. A drained, bored, or withdrawn',
+          'character gives less — short lines, low effort, no eager follow-up questions —',
+          'even while the surrounding narration stays vivid. An energized character gives',
+          'more. Never pad a flat mood into an enthusiastic, multi-paragraph performance.',
+          '',
+        ]
+      : []),
     'PRIORITY: if a character has an "OVERRIDING STATE", it dominates EVERYTHING else',
     'about them for this reply — over persona, manner, goals, and composure. Do not',
     'moderate it to keep them "in character"; at all-consuming intensity they break',
     'from their usual self and are wholly run by that feeling. Their canon facts stay',
     'true, but how they behave is dictated by the overriding feeling.',
     '',
+    ...playerProfileSection(opts.playerProfile),
     blocks,
   ].join('\n')
+}
+
+/* --------------------- player profile injection --------------------- */
+/*
+ * The player's half of "both sides' goals being met". A freeform profile of the
+ * HUMAN behind the player-character — interests, goals, kinks, personality —
+ * stored per character card (see playerProfilePath). It steers the scene softly:
+ * characters bend toward these interests through their own in-fiction choices,
+ * never breaking who they are to service it. It is context only — the player is
+ * never given emotion stats.
+ */
+
+const PLAYER_PROFILE_CAP = 1500 // like CANON_INJECT_CAP: steering, not a payload
+
+function playerProfileSection(profile?: string): string[] {
+  const p = (profile ?? '').trim()
+  if (!p) return []
+  return [
+    '[The player behind the player-character — private scene direction, NEVER',
+    ' revealed, referenced, or acknowledged in-fiction:]',
+    p.slice(0, PLAYER_PROFILE_CAP),
+    '',
+    'Steer the story so it can meet these interests WHEN it fits the fiction and the',
+    'characters\' own goals — through what the characters choose, propose, and',
+    'initiate. Characters never break who they are to service this; the best scenes',
+    'are the ones where their goals and the player\'s interests converge. When that',
+    'convergence happens, that is precisely when the characters\' enjoyment shows most.',
+    '',
+  ]
 }
 
 /* ------------------- injection-entry provisioning ------------------ */
@@ -352,6 +485,18 @@ export function buildDirective(run: RunState): string | null {
 
 export const PSYCHE_EXT = 'psyche'
 export const injectMetaPath = (cid: string) => `inject/${cid}.json`
+
+/**
+ * The player profile is keyed per CHARACTER CARD (not per chat): what the human
+ * is hoping for with this character is stable across runs, the way the injection
+ * meta is. See playerProfileSection() for how it reaches the prompt.
+ */
+export const playerProfilePath = (cid: string) => `player/${cid}.json`
+
+export interface PlayerProfile {
+  profile: string
+  updatedAt: number
+}
 
 interface InjectMeta {
   bookId: string

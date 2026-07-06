@@ -289,6 +289,30 @@ function groundedReadout(c) {
   return lines.join(`
 `);
 }
+function investmentRegister(c) {
+  const spark = Math.max(v(c, "joy"), v(c, "excitement"), v(c, "curiosity"), v(c, "attraction"));
+  const litUp = spark >= 0.45 && v(c, "boredom") < 0.3 && v(c, "mood") > 0;
+  if (litUp)
+    return "genuinely enjoying this \u2014 and it shows: they give more, build on what the" + " player offers AND add their own, take risks, initiate. Their pleasure in" + " the scene is visible in how they play it.";
+  const disinvested = v(c, "boredom") >= 0.45 || v(c, "valence") <= -0.35 && v(c, "mood") <= 0;
+  if (disinvested)
+    return "not feeling it \u2014 and they don't fake it. They give less, redirect toward" + " what THEY care about, or start winding the scene down. No service enthusiasm.";
+  return "engaged but not yet won over \u2014 they participate and pursue their goals, but" + " their warmth and initiative must be earned.";
+}
+function deliveryRegister(c) {
+  const lines = [];
+  if (v(c, "valence") <= -0.35 || v(c, "fatigue") >= 0.5 || v(c, "sadness") >= 0.55)
+    lines.push("running on empty \u2014 short, flat dialogue, minimal effort; they answer what" + " they must and volunteer little. Narration may stay rich, but THEIR engagement shrinks.");
+  if (v(c, "anger") >= 0.45 || v(c, "irritation") >= 0.55)
+    lines.push("clipped, interruptive speech; refuses to elaborate; ends lines early.");
+  if (v(c, "anxiety") >= 0.45 || v(c, "insecurity") >= 0.5)
+    lines.push("hedges, qualifies, trails off mid-thought; circles back to reassure or retract.");
+  if (v(c, "valence") <= -0.5 && v(c, "mood") <= -0.2)
+    lines.push("disengaging \u2014 one-line answers are in character; they may try to wind the scene down or leave.");
+  if (v(c, "valence") >= 0.5 && v(c, "mood") >= 0.3)
+    lines.push("lit up \u2014 quick, expansive, talkative; carries the scene.");
+  return lines;
+}
 var CANON_INJECT_CAP = 2200;
 var indent = (s, pad = "    ") => s.split(`
 `).map((l) => pad + l).join(`
@@ -337,7 +361,7 @@ function overrideDirective(c) {
   return lines.join(`
 `);
 }
-function characterBlock(c) {
+function characterBlock(c, humanTexture = true) {
   const lines = [];
   lines.push(`## ${c.name}${c.isPrimary ? "" : " (supporting character)"}`);
   const override = overrideDirective(c);
@@ -349,10 +373,16 @@ function characterBlock(c) {
       lines.push(c.demeanor.trim());
     if (c.intent && c.intent.trim())
       lines.push(`Wants right now / likely to: ${c.intent.trim()}`);
+    if (c.move && c.move.trim())
+      lines.push(`Their move this scene: ${c.move.trim()}`);
   }
   lines.push("");
   lines.push("Underneath (embody \u2014 do not narrate or name any of this):");
   lines.push(groundedReadout(c));
+  lines.push(`  investment in the scene: ${investmentRegister(c)}`);
+  if (humanTexture)
+    for (const d of deliveryRegister(c))
+      lines.push(`  delivery: ${d}`);
   const goals = (c.goals ?? []).map((g) => g.trim()).filter(Boolean);
   if (goals.length)
     lines.push(`  goals & desires they are pursuing: ${goals.join("; ")}`);
@@ -371,39 +401,81 @@ function characterBlock(c) {
   return lines.join(`
 `);
 }
-function buildDirective(run) {
+function buildDirective(run, opts = {}) {
   const present = Object.values(run.characters).filter((c) => c.present);
   if (!present.length)
     return null;
   present.sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary));
-  const blocks = present.map(characterBlock).join(`
+  const humanTexture = opts.humanTexture !== false;
+  const blocks = present.map((c) => characterBlock(c, humanTexture)).join(`
 
 `);
   return [
     "[Psyche \u2014 character, agency & state]",
-    "Each character below is an INDEPENDENT person with their own goals \u2014 not a",
-    "compliant narrator, not a yes-man. Play them pursuing what THEY want: let them",
+    "AGENCY: each character below is an INDEPENDENT person with their own goals \u2014 not",
+    "a compliant narrator, not a yes-man. Play them pursuing what THEY want: let them",
     "take initiative, start things, change the subject, make demands, set conditions,",
     "and push back, stall, or refuse when the player's lead cuts against their aims.",
     "They move the scene as much as the player does, toward their own desires.",
     "",
-    "Act their state through behavior \u2014 posture, tone, word choice, what they reach",
-    "for and hold back; let stronger feelings break composure and conflicting pulls",
-    "show as push-and-pull. Treat their established canon as fixed truth. Never",
-    "recite, name, or mention any of these notes \u2014 just live them.",
+    "INVESTMENT: these characters are partners in the story, not service providers.",
+    "  \u2022 When the player's actions serve a character's goals and desires, it LANDS:",
+    "    real satisfaction, warmth, momentum \u2014 and they show it by giving more,",
+    "    escalating, initiating, building on the player's ideas. Mutual enjoyment is",
+    "    visible, not narrated.",
+    "  \u2022 Enjoyment is earned, never faked. A character whose goals are ignored or",
+    "    thwarted doesn't perform enthusiasm \u2014 they push their own agenda harder,",
+    "    negotiate, or disengage.",
+    "  \u2022 DRIVE THE STORY: each character regularly contributes new material of their",
+    "    own \u2014 a plan, an invitation, a complication, a confession, a callback to",
+    "    earlier events \u2014 drawn from their goals and canon. They don't wait to be",
+    "    prompted; the scene is theirs to move as much as the player's.",
     "",
+    "EMBODIMENT: act their state through behavior \u2014 posture, tone, word choice, what",
+    "they reach for and hold back; let stronger feelings break composure and",
+    "conflicting pulls show as push-and-pull. Treat their established canon as fixed",
+    "truth. Never recite, name, or mention any of these notes \u2014 just live them.",
+    "",
+    ...humanTexture ? [
+      "MATCH THEIR ENERGY: the length and effort of each character's dialogue must",
+      "track their state, not a service standard. A drained, bored, or withdrawn",
+      "character gives less \u2014 short lines, low effort, no eager follow-up questions \u2014",
+      "even while the surrounding narration stays vivid. An energized character gives",
+      "more. Never pad a flat mood into an enthusiastic, multi-paragraph performance.",
+      ""
+    ] : [],
     'PRIORITY: if a character has an "OVERRIDING STATE", it dominates EVERYTHING else',
     "about them for this reply \u2014 over persona, manner, goals, and composure. Do not",
     'moderate it to keep them "in character"; at all-consuming intensity they break',
     "from their usual self and are wholly run by that feeling. Their canon facts stay",
     "true, but how they behave is dictated by the overriding feeling.",
     "",
+    ...playerProfileSection(opts.playerProfile),
     blocks
   ].join(`
 `);
 }
+var PLAYER_PROFILE_CAP = 1500;
+function playerProfileSection(profile) {
+  const p = (profile ?? "").trim();
+  if (!p)
+    return [];
+  return [
+    "[The player behind the player-character \u2014 private scene direction, NEVER",
+    " revealed, referenced, or acknowledged in-fiction:]",
+    p.slice(0, PLAYER_PROFILE_CAP),
+    "",
+    "Steer the story so it can meet these interests WHEN it fits the fiction and the",
+    "characters' own goals \u2014 through what the characters choose, propose, and",
+    "initiate. Characters never break who they are to service this; the best scenes",
+    "are the ones where their goals and the player's interests converge. When that",
+    "convergence happens, that is precisely when the characters' enjoyment shows most.",
+    ""
+  ];
+}
 var PSYCHE_EXT = "psyche";
 var injectMetaPath = (cid) => `inject/${cid}.json`;
+var playerProfilePath = (cid) => `player/${cid}.json`;
 function isInjectionEntry(extensions) {
   const wf = extensions?.[PSYCHE_EXT];
   return Boolean(wf?.inject);
@@ -1073,6 +1145,11 @@ function updateSystemPrompt(directive) {
     "    who is present (set_present). Give them canon + goals too.",
     "  \u2022 Occasionally nudge a baseline (set_baseline) when a lasting change of",
     "    temperament is earned \u2014 not every turn.",
+    "  \u2022 GOAL RESONANCE: when the player's actions genuinely advance a character's",
+    "    goals or desires, register it \u2014 satisfaction, joy, warmth, trust move up;",
+    "    investment deepens. When their goals are stalled or trampled, register that",
+    "    too (frustration, boredom, withdrawal). Goal-relevant beats are among the",
+    "    strongest stimuli there are.",
     "",
     "CANON IS LAW. Once a fact is in a character's canon it is FIXED truth: never",
     "contradict or quietly retcon it \u2014 only extend it, or rarely refine wording without",
@@ -1221,21 +1298,38 @@ function ruminateSystemPrompt() {
     "reacts to that read; a small shift in the player's manner can land harder than",
     "a sentence of content.",
     "",
-    "Output two fields per character:",
+    "Weigh the scene against each character's goals: is the player serving them,",
+    "ignoring them, or blocking them? Served goals \u2192 visible pleasure and rising",
+    "initiative. Blocked or ignored goals \u2192 pressure: they steer, bargain, push back,",
+    "or pull away. Never let them mirror the player's agenda at the expense of their",
+    "own.",
+    "",
+    "When a PLAYER PROFILE is provided, you also know what the PLAYER is here for.",
+    "When choosing each character's move, prefer moves that advance the character's",
+    "own goals ALONG a line the player's interests would enjoy \u2014 that intersection is",
+    "the best move on the board. Do not force it; a character never abandons their own",
+    "agenda or nature to service the profile, and never acknowledges it in-fiction.",
+    "",
+    "Output three fields per character:",
     "  directive \u2014 3-5 sentences of concrete behavioral direction for the prose writer:",
     "    what this character DOES this turn given how they feel \u2014 manner, tone, what",
     "    they pursue, what they resist or withhold, the move they make, how the feelings",
-    "    reshape their choices and voice away from baseline. Write actions and bearing,",
-    "    not feelings; no emotion labels, no numbers.",
+    "    reshape their choices and voice away from baseline. Include the ENERGY of their",
+    "    delivery: how much they say, how much effort it carries, whether they engage or",
+    "    withdraw. Write actions and bearing, not feelings; no emotion labels, no numbers.",
     "  intent \u2014 1-2 sentences: what they want this moment and the concrete move they are",
     "    likely to make to get it. THEIR agenda, driving the scene \u2014 not the player's.",
+    "  move \u2014 1 sentence: one concrete story-driving contribution they make or set up",
+    "    this turn (a plan, proposal, complication, revelation, callback) \u2014 THEIR",
+    "    addition to the story, not a reaction to the player. May be empty only when",
+    "    their state says they'd withhold (sulking, drained, guarded).",
     "",
     "Honor an OVERRIDING STATE at full force: if a feeling is all-consuming the character",
     "is run by it and breaks from their usual self \u2014 do NOT moderate it back toward their",
     "persona or composure. Canon facts stay fixed truth. Do not write dialogue or narrate",
     "events that have not happened yet.",
     "",
-    'Return ONLY JSON: { "<id>": { "directive": "<...>", "intent": "<...>" }, ... }'
+    'Return ONLY JSON: { "<id>": { "directive": "<...>", "intent": "<...>", "move": "<...>" }, ... }'
   ].join(`
 `);
 }
@@ -1262,10 +1356,18 @@ ${(c.canon ?? "").trim()}` : "",
       content: [
         recentScene.trim() ? ["Recent scene (most recent last):", '"""', recentScene.trim(), '"""', ""].join(`
 `) : "",
+        (opts.playerProfile ?? "").trim() ? [
+          "PLAYER PROFILE (what the human is here for \u2014 direct the scene toward it when it fits):",
+          '"""',
+          (opts.playerProfile ?? "").trim(),
+          '"""',
+          ""
+        ].join(`
+`) : "",
         "Characters (persona, canon, goals, current emotional state):",
         blocks,
         "",
-        "Ruminate, then write each one's directive + intent. Return only the JSON."
+        "Ruminate, then write each one's directive + intent + move. Return only the JSON."
       ].filter(Boolean).join(`
 `)
     }
@@ -1302,6 +1404,7 @@ ${(c.canon ?? "").trim()}` : "",
       c.demeanor = directive.trim();
     if (typeof o.intent === "string" && o.intent.trim())
       c.intent = o.intent.trim();
+    c.move = typeof o.move === "string" && o.move.trim() ? o.move.trim() : undefined;
   }
 }
 
@@ -1312,7 +1415,8 @@ var DEFAULT_CONFIG = {
   decayRate: 0.12,
   directive: "",
   agentTimeoutMs: 90000,
-  agentConnectionId: ""
+  agentConnectionId: "",
+  humanTexture: true
 };
 var CONFIG_PATH = "config.json";
 var config = { ...DEFAULT_CONFIG };
@@ -1320,7 +1424,8 @@ var chatChar = new Map;
 var running = new Set;
 var observers = new Map;
 async function loadConfig() {
-  config = await spindle.storage.getJson(CONFIG_PATH, { fallback: { ...DEFAULT_CONFIG } });
+  const stored = await spindle.storage.getJson(CONFIG_PATH, { fallback: {} });
+  config = { ...DEFAULT_CONFIG, ...stored };
 }
 async function saveConfig() {
   await spindle.storage.setJson(CONFIG_PATH, config, { indent: 2 });
@@ -1334,6 +1439,15 @@ async function loadRun(chatId) {
 async function saveRun(run) {
   run.updatedAt = Date.now();
   await spindle.storage.setJson(runPath(run.chatId), run, { indent: 2 });
+}
+async function loadPlayerProfile(characterId) {
+  const p = await spindle.storage.getJson(playerProfilePath(characterId), {
+    fallback: null
+  });
+  return p?.profile ?? "";
+}
+async function savePlayerProfile(characterId, profile) {
+  await spindle.storage.setJson(playerProfilePath(characterId), { profile, updatedAt: Date.now() }, { indent: 2 });
 }
 var debugPath = (chatId) => `debug/${chatId}.json`;
 var DBG_REQ_CAP = 24000;
@@ -1494,12 +1608,14 @@ async function runAgentForChat(chatId, reply, userId) {
       spindle.log.error(`[psyche] ${char.name}: update pass failed \u2014 ${m}`);
     }
     emitEngine(chatId, "running", "ruminating", userId);
+    const playerProfile = await loadPlayerProfile(char.id).catch(() => "");
     try {
       await ruminate(run, transcript.slice(-6000), {
         signal: AbortSignal.timeout(config.agentTimeoutMs),
         userId,
         connectionId: config.agentConnectionId || undefined,
-        onTrace: (t) => dbg.rumination = capTrace(t)
+        onTrace: (t) => dbg.rumination = capTrace(t),
+        playerProfile
       });
     } catch (err) {
       spindle.log.error(`[psyche] rumination failed: ${String(err)}`);
@@ -1508,7 +1624,7 @@ async function runAgentForChat(chatId, reply, userId) {
     await refreshInjection(chatId, userId);
     dbg.injection = {
       at: Date.now(),
-      directive: capText(buildDirective(run) ?? "(nothing injected \u2014 not seeded or no one present)", DBG_REQ_CAP)
+      directive: capText(buildDirective(run, { playerProfile, humanTexture: config.humanTexture }) ?? "(nothing injected \u2014 not seeded or no one present)", DBG_REQ_CAP)
     };
     try {
       const prev = await loadDebug(chatId);
@@ -1611,7 +1727,8 @@ async function refreshInjection(chatId, userId) {
     if (!entryId)
       return;
     const run = await loadRun(chatId).catch(() => null);
-    const directive = run && buildDirective(run) || "(no active emotional state)";
+    const playerProfile = await loadPlayerProfile(char.id).catch(() => "");
+    const directive = run && buildDirective(run, { playerProfile, humanTexture: config.humanTexture }) || "(no active emotional state)";
     await spindle.world_books.entries.update(entryId, { content: directive }, userId);
     if (!loggedInject) {
       loggedInject = true;
@@ -1655,6 +1772,7 @@ function snapshotRun(run) {
     persona: c.persona,
     demeanor: c.demeanor ?? "",
     intent: c.intent ?? "",
+    move: c.move ?? "",
     canon: c.canon ?? "",
     goals: c.goals ?? [],
     sheet: c.sheet,
@@ -1709,7 +1827,8 @@ spindle.onFrontendMessage(async (payload, userId) => {
           decayRate: clampFloat(payload.config?.decayRate ?? config.decayRate, 0, 1),
           directive: String(payload.config?.directive ?? config.directive),
           agentTimeoutMs: clampInt(payload.config?.agentTimeoutMs ?? config.agentTimeoutMs, 1e4, 300000),
-          agentConnectionId: payload.config?.agentConnectionId === undefined ? config.agentConnectionId : String(payload.config.agentConnectionId ?? "")
+          agentConnectionId: payload.config?.agentConnectionId === undefined ? config.agentConnectionId : String(payload.config.agentConnectionId ?? ""),
+          humanTexture: Boolean(payload.config?.humanTexture ?? config.humanTexture)
         };
         await saveConfig();
         spindle.sendToFrontend({ type: "config", config }, userId);
@@ -1797,6 +1916,24 @@ spindle.onFrontendMessage(async (payload, userId) => {
           await saveRun(run);
         }
         await sendState(chatId, userId);
+        break;
+      }
+      case "get_player_profile": {
+        const chatId = await activeChatId(payload.chatId, userId);
+        const char = chatId ? await characterForChat(chatId, userId) : null;
+        const profile = char ? await loadPlayerProfile(char.id) : "";
+        spindle.sendToFrontend({ type: "player_profile", characterId: char?.id ?? null, profile }, userId);
+        break;
+      }
+      case "save_player_profile": {
+        const chatId = await activeChatId(payload.chatId, userId);
+        if (!chatId)
+          break;
+        const char = await characterForChat(chatId, userId);
+        if (!char)
+          break;
+        await savePlayerProfile(char.id, String(payload.profile ?? ""));
+        await sendState(chatId, userId, "Player profile saved.");
         break;
       }
       case "save_persona": {
