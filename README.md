@@ -64,6 +64,13 @@ description and a one-line summary. Everything else is rolled per run.
   serve it. The player is never given emotion stats — feelings stay the
   characters' alone.
 
+- **An editing pass (off by default).** A final LLM call rewrites each reply —
+  including swipes, regens, and continues — per an editable style prompt before
+  you read it: show-don't-tell over inner monologue, the world through the
+  partner's eyes, no assistant-isms, warts left in. What happens is preserved;
+  how it reads is rewritten. The raw text streams in first, then is replaced in
+  place. Own model dropdown, prompt editor, and toggle in the panel.
+
 - **Energy-matched delivery.** Deterministic `delivery:` lines translate the
   state into how much the character says and how much effort it carries —
   drained or sulking reads short and flat, lit-up reads quick and expansive —
@@ -115,4 +122,5 @@ before publishing.
 In the **Psyche** drawer tab: enable/disable, human texture (energy-matched
 replies), engine rounds per turn, decay rate, an optional engine directive
 (tone steering), reroll seed, reset run, per-character persona/sheet/presence
-editing, and the player profile for the current character card.
+editing, the player profile for the current character card, and the editor
+(toggle, style prompt, model).

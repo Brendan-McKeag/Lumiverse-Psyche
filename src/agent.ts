@@ -621,4 +621,137 @@ export async function ruminate(
   }
 }
 
-export { AGENT_SENTINEL, EmotionDef }
+/* ------------------------ editor (final pass) ----------------------- */
+/*
+ * The editing agent: the last stop between the prose model and the player's
+ * eyes. GENERATION_ENDED hands us the persisted reply; we rewrite it per the
+ * user-editable style directives and overwrite the message in place. What
+ * HAPPENS in the reply is preserved — events, dialogue intent, scene position —
+ * only how it READS changes. Off by default (an extra LLM call per reply).
+ */
+
+export const DEFAULT_EDITOR_PROMPT = [
+  'Your goal is NOT to be a helpful assistant, but to render a compelling,',
+  'lived-in world — warts and all. Characters can be petty, wrong, dull, or',
+  'unkind; do not sand them smooth.',
+  '',
+  'Less inner monologue, more show-and-tell: cut narrated thoughts and',
+  'feeling-labels ("she felt a surge of..."), and replace them with what the',
+  "player's character could actually see, hear, and infer — expressions,",
+  'actions, tone, silences. Describe things as they would appear through the',
+  "roleplay partner's eyes and let them figure the rest out.",
+  '',
+  'Kill assistant-isms: no summarizing the moment, no tidy emotional bows, no',
+  'closing questions or invitations bolted onto the end, no restating what the',
+  'player just said, no over-explaining subtext the prose already carries.',
+  '',
+  "If the character's goals and the partner's are clearly aligned in this",
+  "moment, match the partner's vibe and energy — while staying true to the",
+  "character's own intentions and psyche as briefed.",
+  '',
+  'Prefer concrete, sensory prose over abstraction. Vary sentence rhythm.',
+  'Trim filler; the edit should usually be the same length or shorter.',
+].join('\n')
+
+function editorSystemPrompt(stylePrompt: string): string {
+  return [
+    AGENT_SENTINEL,
+    "You are Psyche's EDITOR — the final pass over a roleplay reply before the",
+    'player sees it. Rewrite the reply below according to the style directives,',
+    'while preserving exactly what happens: same events, same dialogue intent, same',
+    'scene position. You may cut, tighten, reorder sentences, and reshape prose;',
+    'you may NOT invent new events, new dialogue meaning, or act for the player.',
+    '',
+    'STYLE DIRECTIVES:',
+    (stylePrompt.trim() || DEFAULT_EDITOR_PROMPT).trim(),
+    '',
+    "Preserve the reply's formatting conventions exactly (markdown, asterisk",
+    "actions, quotation style, paragraph breaks, any HTML/tags you don't",
+    "understand). Never write the player's words or actions. Output ONLY the",
+    'edited reply text — no preamble, no commentary, no quotes around it.',
+  ].join('\n')
+}
+
+/** Compact who's-who so edits stay true to intent — not the full directive. */
+function editorCharacterBrief(run: RunState): string {
+  const present = Object.values(run.characters).filter((c) => c.present)
+  if (!present.length) return ''
+  return present
+    .map((c) =>
+      [
+        `### ${c.name}${c.isPrimary ? '' : ' (supporting)'}`,
+        c.persona.trim() ? `persona: ${c.persona.trim()}` : '',
+        (c.goals ?? []).length ? `goals: ${(c.goals ?? []).join('; ')}` : '',
+        c.intent?.trim() ? `wants right now: ${c.intent.trim()}` : '',
+        c.demeanor?.trim() ? `current bearing: ${c.demeanor.trim()}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    )
+    .join('\n\n')
+}
+
+/**
+ * Rewrite a finished reply per the style directives. Returns the edited text,
+ * or null when the model returned nothing usable — the caller keeps the
+ * original. Never throws for prompt-shaped problems; LLM/transport errors do
+ * propagate so the caller can log them.
+ */
+export async function editReply(
+  run: RunState,
+  transcriptTail: string,
+  reply: string,
+  stylePrompt: string,
+  opts: { signal?: AbortSignal; userId?: string; connectionId?: string; onTrace?: TraceFn },
+): Promise<string | null> {
+  const brief = editorCharacterBrief(run)
+  const messages: LlmMessage[] = [
+    { role: 'system', content: editorSystemPrompt(stylePrompt) },
+    {
+      role: 'user',
+      content: [
+        brief ? ['CHARACTERS (stay true to these intents):', brief, ''].join('\n') : '',
+        transcriptTail.trim()
+          ? ['RECENT SCENE (for voice and context; most recent last):', '"""', transcriptTail.trim(), '"""', ''].join('\n')
+          : '',
+        'REPLY TO EDIT:',
+        '"""',
+        reply,
+        '"""',
+        '',
+        'Rewrite it now. Output only the edited reply.',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    },
+  ]
+
+  const res = (await spindle.generate.quiet({
+    type: 'quiet',
+    messages,
+    parameters: { temperature: 0.7 },
+    reasoning: { source: 'off' },
+    signal: opts.signal,
+    userId: opts.userId,
+    ...(opts.connectionId ? { connection_id: opts.connectionId } : {}),
+  })) as { content?: string }
+
+  opts.onTrace?.({
+    at: Date.now(),
+    request: serializeMessages(messages),
+    response: res.content ?? '',
+    meta: `editor · ${reply.length} -> ${(res.content ?? '').trim().length} chars · connection: ${
+      opts.connectionId || 'prose default'
+    }`,
+  })
+
+  const edited = (res.content ?? '').trim()
+  // Sanity floor: an empty or suspiciously tiny result for a long reply means
+  // the editor misfired (refusal, truncation) — keep the original.
+  if (!edited) return null
+  if (reply.trim().length >= 200 && edited.length < 20) return null
+  return edited
+}
+
+export { AGENT_SENTINEL }
+export type { EmotionDef }

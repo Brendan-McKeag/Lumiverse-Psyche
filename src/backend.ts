@@ -14,7 +14,7 @@ import {
   isInjectionEntry,
   slugify,
 } from './run'
-import { seedRun, runPsycheAgent, ruminate, StageTrace } from './agent'
+import { seedRun, runPsycheAgent, ruminate, editReply, DEFAULT_EDITOR_PROMPT, StageTrace } from './agent'
 import {
   EMOTIONS,
   EMOTION_BY_KEY,
@@ -44,6 +44,12 @@ interface Config {
   agentConnectionId: string
   /** gate for the energy-matched delivery lines + ENERGY preamble (human texture) */
   humanTexture: boolean
+  /** the editing pass: rewrite each reply per editorPrompt before the player reads it */
+  editorEnabled: boolean
+  /** user-editable style directives for the editor ('' falls back to the default) */
+  editorPrompt: string
+  /** connection id for the editor call; '' = same as the prose model */
+  editorConnectionId: string
 }
 
 const DEFAULT_CONFIG: Config = {
@@ -54,6 +60,9 @@ const DEFAULT_CONFIG: Config = {
   agentTimeoutMs: 90000,
   agentConnectionId: '',
   humanTexture: true,
+  editorEnabled: false,
+  editorPrompt: DEFAULT_EDITOR_PROMPT,
+  editorConnectionId: '',
 }
 const CONFIG_PATH = 'config.json'
 
@@ -109,6 +118,7 @@ interface DebugBundle {
   seed?: StageTrace
   update?: StageTrace
   rumination?: StageTrace
+  editor?: StageTrace
   injection?: { at: number; directive: string }
 }
 const debugPath = (chatId: string) => `debug/${chatId}.json`
@@ -374,6 +384,96 @@ async function runAgentLoop(chatId: string, reply: string, userId?: string) {
   }
 }
 
+/* --------------------------- editing pass --------------------------- *
+ * The final stop before the player's eyes. There is no pre-display hook in the
+ * host — the reply streams into the bubble live — so we edit POST-HOC: on
+ * GENERATION_ENDED the row is already persisted; we rewrite it per the style
+ * directives and overwrite the message in place (updateMessage broadcasts
+ * MESSAGE_EDITED, which re-renders the bubble). Every failure path keeps the
+ * original text; a dead editor connection must never eat a reply.
+ * ------------------------------------------------------------------ */
+
+const editingChats = new Set<string>()
+const EDITOR_SCENE_TAIL = 4000
+
+/** Rewrite one persisted reply. Returns the text now on screen (edited or original). */
+async function runEditor(chatId: string, messageId: string, reply: string, userId?: string): Promise<string> {
+  if (!config.editorEnabled || !reply.trim()) return reply
+  if (editingChats.has(chatId)) return reply // a newer generation supersedes
+  editingChats.add(chatId)
+  try {
+    emitEngine(chatId, 'running', 'editing reply', userId)
+
+    // Recent scene for voice/context, excluding the reply being edited (it is
+    // already persisted, so it would otherwise appear twice in the prompt).
+    let sceneTail = ''
+    let swipeIdAtStart: number | undefined
+    try {
+      const msgs = await spindle.chat.getMessages(chatId)
+      const row = msgs.find((m) => m.id === messageId)
+      swipeIdAtStart = (row as { swipe_id?: number } | undefined)?.swipe_id
+      sceneTail = msgs
+        .filter((m) => m.id !== messageId)
+        .map((m) => {
+          const text = typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
+          return text.trim() ? `${m.role === 'user' ? 'PLAYER' : 'CHARACTER'}:\n${text.trim()}` : ''
+        })
+        .filter(Boolean)
+        .join('\n\n')
+        .slice(-EDITOR_SCENE_TAIL)
+    } catch {
+      /* editing works without context */
+    }
+
+    const run = await loadRun(chatId).catch(() => null)
+    const dbg: DebugBundle = {}
+    let edited: string | null = null
+    try {
+      edited = await editReply(run ?? emptyRun(chatId), sceneTail, reply, config.editorPrompt, {
+        signal: AbortSignal.timeout(config.agentTimeoutMs),
+        userId,
+        connectionId: config.editorConnectionId || undefined,
+        onTrace: (t) => (dbg.editor = capTrace(t)),
+      })
+    } catch (err) {
+      const m = err instanceof Error && err.name === 'AbortError' ? 'timed out' : String(err)
+      spindle.log.warn(`[psyche] editor pass failed (reply kept as-is): ${m}`)
+    }
+    if (dbg.editor) {
+      try {
+        const prev = await loadDebug(chatId)
+        await spindle.storage.setJson(debugPath(chatId), { ...prev, ...dbg })
+      } catch {
+        /* trace is best-effort */
+      }
+    }
+    if (!edited || edited === reply) return reply
+
+    // Swipe-race guard: if the user swiped to another variant (or anything else
+    // rewrote the row) while we were editing, drop the edit rather than clobber.
+    try {
+      const msgs = await spindle.chat.getMessages(chatId)
+      const row = msgs.find((m) => m.id === messageId)
+      if (!row || typeof row.content !== 'string' || row.content.trim() !== reply.trim()) {
+        spindle.log.info('[psyche] editor: message changed mid-edit; keeping the newer content')
+        return reply
+      }
+      await spindle.chat.updateMessage(chatId, messageId, {
+        content: edited,
+        ...(swipeIdAtStart !== undefined ? { swipe_id: swipeIdAtStart } : {}),
+      })
+      spindle.log.info(`[psyche] editor: rewrote reply (${reply.length} -> ${edited.length} chars)`)
+      return edited
+    } catch (err) {
+      spindle.log.warn(`[psyche] editor: could not write edit: ${String(err)}`)
+      return reply
+    }
+  } finally {
+    editingChats.delete(chatId)
+    emitEngine(chatId, running.has(chatId) ? 'running' : 'idle', undefined, userId)
+  }
+}
+
 /* --------------------------- generation hooks ---------------------- */
 
 function ensureObserver(chatId: string) {
@@ -398,16 +498,23 @@ spindle.on('GENERATION_ENDED', async (payload, userId) => {
   if (!config.enabled || !payload.chatId) return
   const chatId = payload.chatId
   if (payload.error) return dropObserver(chatId)
-  const gt = payload.generationType
+  const gt = payload.generationType ?? 'normal'
+  const obs = observers.get(chatId)
+  let reply = (payload.content ?? obs?.content ?? '').trim()
+  dropObserver(chatId)
+
+  // Everything the player will read gets the editing pass — normal turns AND
+  // swipes/regens/continues. Impersonation/quiet output is not ours to touch.
+  if (!['normal', 'swipe', 'regenerate', 'continue'].includes(gt)) return
+  const messageId = (payload as { messageId?: string }).messageId
+  if (messageId && reply) reply = await runEditor(chatId, messageId, reply, userId)
+
   // Only advance the mind on a genuinely NEW assistant turn. Swipes, regens,
   // continues and impersonations re-roll an existing turn — re-running the
   // engine on those would double-count emotional impact and clobber any manual
-  // edits the operator made to test a regeneration. (Absent type == normal.)
-  if (gt && gt !== 'normal') return dropObserver(chatId)
-  const obs = observers.get(chatId)
-  const reply = (payload.content ?? obs?.content ?? '').trim()
-  dropObserver(chatId)
-  scheduleAgent(chatId, reply, userId)
+  // edits the operator made to test a regeneration. The engine reads the EDITED
+  // reply, so its view matches what the player actually saw.
+  if (gt === 'normal') scheduleAgent(chatId, reply, userId)
 })
 
 spindle.on('GENERATION_STOPPED', async (payload, userId) => {
@@ -549,7 +656,9 @@ spindle.onFrontendMessage(async (payload: any, userId) => {
  try {
   switch (payload?.type) {
     case 'get_config':
-      spindle.sendToFrontend({ type: 'config', config }, userId)
+      // editorPromptDefault rides along so the panel's "Reset to default"
+      // doesn't need its own copy of the prompt text.
+      spindle.sendToFrontend({ type: 'config', config, editorPromptDefault: DEFAULT_EDITOR_PROMPT }, userId)
       break
 
     case 'set_config':
@@ -564,9 +673,18 @@ spindle.onFrontendMessage(async (payload: any, userId) => {
             ? config.agentConnectionId
             : String(payload.config.agentConnectionId ?? ''),
         humanTexture: Boolean(payload.config?.humanTexture ?? config.humanTexture),
+        editorEnabled: Boolean(payload.config?.editorEnabled ?? config.editorEnabled),
+        editorPrompt:
+          payload.config?.editorPrompt === undefined
+            ? config.editorPrompt
+            : String(payload.config.editorPrompt ?? ''),
+        editorConnectionId:
+          payload.config?.editorConnectionId === undefined
+            ? config.editorConnectionId
+            : String(payload.config.editorConnectionId ?? ''),
       }
       await saveConfig()
-      spindle.sendToFrontend({ type: 'config', config }, userId)
+      spindle.sendToFrontend({ type: 'config', config, editorPromptDefault: DEFAULT_EDITOR_PROMPT }, userId)
       break
 
     case 'get_connections': {

@@ -96,6 +96,18 @@ function setup(ctx) {
       </div>
 
       <div class="ps-section">
+        <h4 class="ps-h">Editor — final pass over each reply</h4>
+        <div class="ps-muted">Rewrites the reply per the style directives after it streams in (you'll see the raw text replaced in place). What happens is preserved; how it reads is rewritten. One extra LLM call per reply.</div>
+        <label class="ps-row"><input type="checkbox" class="ps-ed-en" /> Edit replies before display</label>
+        <div><span class="ps-muted">Style directives</span><textarea class="ps-ta ps-ed-prompt" style="min-height:140px" placeholder="How the editor should reshape the prose."></textarea></div>
+        <div><span class="ps-muted">Editor model</span><select class="ps-input ps-ed-conn"><option value="">Same as the prose model</option></select></div>
+        <div class="ps-row">
+          <button class="ps-btn ps-ed-save">Save editor</button>
+          <button class="ps-btn ps-ed-reset">Reset prompt to default</button>
+        </div>
+      </div>
+
+      <div class="ps-section">
         <h4 class="ps-h">Run</h4>
         <div class="ps-muted ps-seed"></div>
         <div class="ps-row">
@@ -122,6 +134,7 @@ function setup(ctx) {
           <button class="ps-btn ps-dbg" data-k="seed">1 · Seed</button>
           <button class="ps-btn ps-dbg" data-k="update">2 · Mind update</button>
           <button class="ps-btn ps-dbg" data-k="rumination">3 · Rumination</button>
+          <button class="ps-btn ps-dbg" data-k="editor">✎ Editor</button>
           <button class="ps-btn ps-dbg" data-k="injection">→ Injected directive</button>
           <button class="ps-btn ps-dbg-refresh" title="Re-fetch latest">↻</button>
         </div>
@@ -155,9 +168,14 @@ function setup(ctx) {
   const decayEl = q(".ps-decay");
   const dirEl = q(".ps-dir");
   const connEl = q(".ps-conn");
+  const edEnEl = q(".ps-ed-en");
+  const edPromptEl = q(".ps-ed-prompt");
+  const edConnEl = q(".ps-ed-conn");
   let connOptions = [];
   let connError = "";
   let agentConnId = "";
+  let editorConnId = "";
+  let editorPromptDefault = "";
   const dbgOut = q(".ps-dbg-out");
   const dbgMeta = q(".ps-dbg-meta");
   let debugData = {};
@@ -261,21 +279,25 @@ function setup(ctx) {
     ctx.sendToBackend({ type: "get_state" });
     ctx.sendToBackend({ type: "get_player_profile" });
   };
-  function renderConnections() {
+  function fillConnectionSelect(el, savedId) {
     const opts = ['<option value="">Same as the prose model</option>'];
     for (const c of connOptions) {
       const label = `${c.name} — ${c.provider}/${c.model}`;
-      opts.push(`<option value="${esc(c.id)}"${c.id === agentConnId ? " selected" : ""}>${esc(label)}</option>`);
+      opts.push(`<option value="${esc(c.id)}"${c.id === savedId ? " selected" : ""}>${esc(label)}</option>`);
     }
-    if (agentConnId && !connOptions.some((c) => c.id === agentConnId)) {
-      opts.push(`<option value="${esc(agentConnId)}" selected>(saved connection ${esc(agentConnId)})</option>`);
+    if (savedId && !connOptions.some((c) => c.id === savedId)) {
+      opts.push(`<option value="${esc(savedId)}" selected>(saved connection ${esc(savedId)})</option>`);
     }
     if (!connOptions.length) {
       const why = connError ? `couldn't load connections: ${connError}` : "no connections loaded yet — reopen this tab to retry";
       opts.push(`<option value="" disabled>(${esc(why)})</option>`);
     }
-    connEl.innerHTML = opts.join("");
-    connEl.value = agentConnId;
+    el.innerHTML = opts.join("");
+    el.value = savedId;
+  }
+  function renderConnections() {
+    fillConnectionSelect(connEl, agentConnId);
+    fillConnectionSelect(edConnEl, editorConnId);
   }
   function renderDebug() {
     tab.root.querySelectorAll(".ps-dbg").forEach((b) => b.classList.toggle("sel", b.dataset.k === dbgKey));
@@ -353,6 +375,20 @@ ${t.response}`;
   });
   q(".ps-save-player").addEventListener("click", () => {
     ctx.sendToBackend({ type: "save_player_profile", profile: playerEl.value });
+  });
+  q(".ps-ed-save").addEventListener("click", () => {
+    ctx.sendToBackend({
+      type: "set_config",
+      config: {
+        editorEnabled: edEnEl.checked,
+        editorPrompt: edPromptEl.value,
+        editorConnectionId: edConnEl.value
+      }
+    });
+  });
+  q(".ps-ed-reset").addEventListener("click", () => {
+    if (editorPromptDefault)
+      edPromptEl.value = editorPromptDefault;
   });
   q(".ps-addsec").addEventListener("click", () => {
     const c = selected();
@@ -436,6 +472,10 @@ ${t.response}`;
         decayEl.value = String(c.decayRate ?? 0.12);
         dirEl.value = c.directive ?? "";
         agentConnId = c.agentConnectionId ?? "";
+        edEnEl.checked = c.editorEnabled === true;
+        edPromptEl.value = c.editorPrompt ?? "";
+        editorConnId = c.editorConnectionId ?? "";
+        editorPromptDefault = typeof p.editorPromptDefault === "string" ? p.editorPromptDefault : "";
         renderConnections();
         break;
       }

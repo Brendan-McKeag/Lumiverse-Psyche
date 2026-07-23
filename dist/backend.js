@@ -1407,6 +1407,106 @@ ${(c.canon ?? "").trim()}` : "",
     c.move = typeof o.move === "string" && o.move.trim() ? o.move.trim() : undefined;
   }
 }
+var DEFAULT_EDITOR_PROMPT = [
+  "Your goal is NOT to be a helpful assistant, but to render a compelling,",
+  "lived-in world \u2014 warts and all. Characters can be petty, wrong, dull, or",
+  "unkind; do not sand them smooth.",
+  "",
+  "Less inner monologue, more show-and-tell: cut narrated thoughts and",
+  'feeling-labels ("she felt a surge of..."), and replace them with what the',
+  "player's character could actually see, hear, and infer \u2014 expressions,",
+  "actions, tone, silences. Describe things as they would appear through the",
+  "roleplay partner's eyes and let them figure the rest out.",
+  "",
+  "Kill assistant-isms: no summarizing the moment, no tidy emotional bows, no",
+  "closing questions or invitations bolted onto the end, no restating what the",
+  "player just said, no over-explaining subtext the prose already carries.",
+  "",
+  "If the character's goals and the partner's are clearly aligned in this",
+  "moment, match the partner's vibe and energy \u2014 while staying true to the",
+  "character's own intentions and psyche as briefed.",
+  "",
+  "Prefer concrete, sensory prose over abstraction. Vary sentence rhythm.",
+  "Trim filler; the edit should usually be the same length or shorter."
+].join(`
+`);
+function editorSystemPrompt(stylePrompt) {
+  return [
+    AGENT_SENTINEL,
+    "You are Psyche's EDITOR \u2014 the final pass over a roleplay reply before the",
+    "player sees it. Rewrite the reply below according to the style directives,",
+    "while preserving exactly what happens: same events, same dialogue intent, same",
+    "scene position. You may cut, tighten, reorder sentences, and reshape prose;",
+    "you may NOT invent new events, new dialogue meaning, or act for the player.",
+    "",
+    "STYLE DIRECTIVES:",
+    (stylePrompt.trim() || DEFAULT_EDITOR_PROMPT).trim(),
+    "",
+    "Preserve the reply's formatting conventions exactly (markdown, asterisk",
+    "actions, quotation style, paragraph breaks, any HTML/tags you don't",
+    "understand). Never write the player's words or actions. Output ONLY the",
+    "edited reply text \u2014 no preamble, no commentary, no quotes around it."
+  ].join(`
+`);
+}
+function editorCharacterBrief(run) {
+  const present = Object.values(run.characters).filter((c) => c.present);
+  if (!present.length)
+    return "";
+  return present.map((c) => [
+    `### ${c.name}${c.isPrimary ? "" : " (supporting)"}`,
+    c.persona.trim() ? `persona: ${c.persona.trim()}` : "",
+    (c.goals ?? []).length ? `goals: ${(c.goals ?? []).join("; ")}` : "",
+    c.intent?.trim() ? `wants right now: ${c.intent.trim()}` : "",
+    c.demeanor?.trim() ? `current bearing: ${c.demeanor.trim()}` : ""
+  ].filter(Boolean).join(`
+`)).join(`
+
+`);
+}
+async function editReply(run, transcriptTail, reply, stylePrompt, opts) {
+  const brief = editorCharacterBrief(run);
+  const messages = [
+    { role: "system", content: editorSystemPrompt(stylePrompt) },
+    {
+      role: "user",
+      content: [
+        brief ? ["CHARACTERS (stay true to these intents):", brief, ""].join(`
+`) : "",
+        transcriptTail.trim() ? ["RECENT SCENE (for voice and context; most recent last):", '"""', transcriptTail.trim(), '"""', ""].join(`
+`) : "",
+        "REPLY TO EDIT:",
+        '"""',
+        reply,
+        '"""',
+        "",
+        "Rewrite it now. Output only the edited reply."
+      ].filter(Boolean).join(`
+`)
+    }
+  ];
+  const res = await spindle.generate.quiet({
+    type: "quiet",
+    messages,
+    parameters: { temperature: 0.7 },
+    reasoning: { source: "off" },
+    signal: opts.signal,
+    userId: opts.userId,
+    ...opts.connectionId ? { connection_id: opts.connectionId } : {}
+  });
+  opts.onTrace?.({
+    at: Date.now(),
+    request: serializeMessages(messages),
+    response: res.content ?? "",
+    meta: `editor \xB7 ${reply.length} -> ${(res.content ?? "").trim().length} chars \xB7 connection: ${opts.connectionId || "prose default"}`
+  });
+  const edited = (res.content ?? "").trim();
+  if (!edited)
+    return null;
+  if (reply.trim().length >= 200 && edited.length < 20)
+    return null;
+  return edited;
+}
 
 // src/backend.ts
 var DEFAULT_CONFIG = {
@@ -1416,7 +1516,10 @@ var DEFAULT_CONFIG = {
   directive: "",
   agentTimeoutMs: 90000,
   agentConnectionId: "",
-  humanTexture: true
+  humanTexture: true,
+  editorEnabled: false,
+  editorPrompt: DEFAULT_EDITOR_PROMPT,
+  editorConnectionId: ""
 };
 var CONFIG_PATH = "config.json";
 var config = { ...DEFAULT_CONFIG };
@@ -1676,6 +1779,74 @@ async function runAgentLoop(chatId, reply, userId) {
     emitEngine(chatId, "idle", undefined, userId);
   }
 }
+var editingChats = new Set;
+var EDITOR_SCENE_TAIL = 4000;
+async function runEditor(chatId, messageId, reply, userId) {
+  if (!config.editorEnabled || !reply.trim())
+    return reply;
+  if (editingChats.has(chatId))
+    return reply;
+  editingChats.add(chatId);
+  try {
+    emitEngine(chatId, "running", "editing reply", userId);
+    let sceneTail = "";
+    let swipeIdAtStart;
+    try {
+      const msgs = await spindle.chat.getMessages(chatId);
+      const row = msgs.find((m) => m.id === messageId);
+      swipeIdAtStart = row?.swipe_id;
+      sceneTail = msgs.filter((m) => m.id !== messageId).map((m) => {
+        const text = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+        return text.trim() ? `${m.role === "user" ? "PLAYER" : "CHARACTER"}:
+${text.trim()}` : "";
+      }).filter(Boolean).join(`
+
+`).slice(-EDITOR_SCENE_TAIL);
+    } catch {}
+    const run = await loadRun(chatId).catch(() => null);
+    const dbg = {};
+    let edited = null;
+    try {
+      edited = await editReply(run ?? emptyRun(chatId), sceneTail, reply, config.editorPrompt, {
+        signal: AbortSignal.timeout(config.agentTimeoutMs),
+        userId,
+        connectionId: config.editorConnectionId || undefined,
+        onTrace: (t) => dbg.editor = capTrace(t)
+      });
+    } catch (err) {
+      const m = err instanceof Error && err.name === "AbortError" ? "timed out" : String(err);
+      spindle.log.warn(`[psyche] editor pass failed (reply kept as-is): ${m}`);
+    }
+    if (dbg.editor) {
+      try {
+        const prev = await loadDebug(chatId);
+        await spindle.storage.setJson(debugPath(chatId), { ...prev, ...dbg });
+      } catch {}
+    }
+    if (!edited || edited === reply)
+      return reply;
+    try {
+      const msgs = await spindle.chat.getMessages(chatId);
+      const row = msgs.find((m) => m.id === messageId);
+      if (!row || typeof row.content !== "string" || row.content.trim() !== reply.trim()) {
+        spindle.log.info("[psyche] editor: message changed mid-edit; keeping the newer content");
+        return reply;
+      }
+      await spindle.chat.updateMessage(chatId, messageId, {
+        content: edited,
+        ...swipeIdAtStart !== undefined ? { swipe_id: swipeIdAtStart } : {}
+      });
+      spindle.log.info(`[psyche] editor: rewrote reply (${reply.length} -> ${edited.length} chars)`);
+      return edited;
+    } catch (err) {
+      spindle.log.warn(`[psyche] editor: could not write edit: ${String(err)}`);
+      return reply;
+    }
+  } finally {
+    editingChats.delete(chatId);
+    emitEngine(chatId, running.has(chatId) ? "running" : "idle", undefined, userId);
+  }
+}
 function ensureObserver(chatId) {
   if (!observers.has(chatId))
     observers.set(chatId, spindle.generate.observe(chatId));
@@ -1701,13 +1872,17 @@ spindle.on("GENERATION_ENDED", async (payload, userId) => {
   const chatId = payload.chatId;
   if (payload.error)
     return dropObserver(chatId);
-  const gt = payload.generationType;
-  if (gt && gt !== "normal")
-    return dropObserver(chatId);
+  const gt = payload.generationType ?? "normal";
   const obs = observers.get(chatId);
-  const reply = (payload.content ?? obs?.content ?? "").trim();
+  let reply = (payload.content ?? obs?.content ?? "").trim();
   dropObserver(chatId);
-  scheduleAgent(chatId, reply, userId);
+  if (!["normal", "swipe", "regenerate", "continue"].includes(gt))
+    return;
+  const messageId = payload.messageId;
+  if (messageId && reply)
+    reply = await runEditor(chatId, messageId, reply, userId);
+  if (gt === "normal")
+    scheduleAgent(chatId, reply, userId);
 });
 spindle.on("GENERATION_STOPPED", async (payload, userId) => {
   if (!config.enabled || !payload.chatId)
@@ -1818,7 +1993,7 @@ spindle.onFrontendMessage(async (payload, userId) => {
   try {
     switch (payload?.type) {
       case "get_config":
-        spindle.sendToFrontend({ type: "config", config }, userId);
+        spindle.sendToFrontend({ type: "config", config, editorPromptDefault: DEFAULT_EDITOR_PROMPT }, userId);
         break;
       case "set_config":
         config = {
@@ -1828,10 +2003,13 @@ spindle.onFrontendMessage(async (payload, userId) => {
           directive: String(payload.config?.directive ?? config.directive),
           agentTimeoutMs: clampInt(payload.config?.agentTimeoutMs ?? config.agentTimeoutMs, 1e4, 300000),
           agentConnectionId: payload.config?.agentConnectionId === undefined ? config.agentConnectionId : String(payload.config.agentConnectionId ?? ""),
-          humanTexture: Boolean(payload.config?.humanTexture ?? config.humanTexture)
+          humanTexture: Boolean(payload.config?.humanTexture ?? config.humanTexture),
+          editorEnabled: Boolean(payload.config?.editorEnabled ?? config.editorEnabled),
+          editorPrompt: payload.config?.editorPrompt === undefined ? config.editorPrompt : String(payload.config.editorPrompt ?? ""),
+          editorConnectionId: payload.config?.editorConnectionId === undefined ? config.editorConnectionId : String(payload.config.editorConnectionId ?? "")
         };
         await saveConfig();
-        spindle.sendToFrontend({ type: "config", config }, userId);
+        spindle.sendToFrontend({ type: "config", config, editorPromptDefault: DEFAULT_EDITOR_PROMPT }, userId);
         break;
       case "get_connections": {
         let connections = [];
