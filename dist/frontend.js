@@ -36,6 +36,8 @@ function setup(ctx) {
     .ps-engine { font-size:12px; font-weight:600; padding:6px 10px; border-radius:var(--lumiverse-radius); border:1px solid var(--lumiverse-border); text-align:center; }
     .ps-engine.run { color:#e0a23c; border-color:#e0a23c; background:rgba(224,162,60,0.10); }
     .ps-engine.idle { color:#4fbf67; border-color:#4fbf67; background:rgba(79,191,103,0.07); }
+    .ps-edit-badge { display:inline-flex; align-items:center; gap:4px; margin-top:4px; font-size:10px; opacity:.65; color:var(--lumiverse-text-muted); cursor:pointer; user-select:none; }
+    .ps-edit-badge:hover { opacity:1; }
   `);
   const tab = ctx.ui.registerDrawerTab({
     id: "psyche",
@@ -99,6 +101,7 @@ function setup(ctx) {
         <h4 class="ps-h">Editor — final pass over each reply</h4>
         <div class="ps-muted">Rewrites the reply per the style directives after it streams in (you'll see the raw text replaced in place). What happens is preserved; how it reads is rewritten. One extra LLM call per reply.</div>
         <label class="ps-row"><input type="checkbox" class="ps-ed-en" /> Edit replies before display</label>
+        <label class="ps-row"><input type="checkbox" class="ps-ed-badge" /> Show ✎ badge on edited replies (click badge to view the original)</label>
         <div><span class="ps-muted">Style directives</span><textarea class="ps-ta ps-ed-prompt" style="min-height:140px" placeholder="How the editor should reshape the prose."></textarea></div>
         <div><span class="ps-muted">Editor model</span><select class="ps-input ps-ed-conn"><option value="">Same as the prose model</option></select></div>
         <div class="ps-row">
@@ -169,6 +172,7 @@ function setup(ctx) {
   const dirEl = q(".ps-dir");
   const connEl = q(".ps-conn");
   const edEnEl = q(".ps-ed-en");
+  const edBadgeEl = q(".ps-ed-badge");
   const edPromptEl = q(".ps-ed-prompt");
   const edConnEl = q(".ps-ed-conn");
   let connOptions = [];
@@ -182,6 +186,38 @@ function setup(ctx) {
   let dbgKey = "injection";
   const engineEl = q(".ps-engine");
   const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  let badgeEnabled = true;
+  const badgeWrappers = new Map;
+  const badgeInfo = new Map;
+  function clearBadges() {
+    for (const el of badgeWrappers.values()) {
+      try {
+        ctx.dom.uninject(el);
+      } catch {}
+    }
+    badgeWrappers.clear();
+    badgeInfo.clear();
+  }
+  function markEdited(messageId, chars, original) {
+    badgeInfo.set(messageId, { chars, original });
+    if (!badgeEnabled || badgeWrappers.has(messageId))
+      return;
+    const bubble = ctx.dom.findMessageElement(messageId);
+    if (!bubble)
+      return;
+    const wrapper = ctx.dom.inject(bubble, `<span class="ps-edit-badge" title="Rewritten by Psyche's editor — click to view the original">✎ edited by Psyche${chars ? ` · ${esc(chars)}` : ""}</span>`, "beforeend");
+    badgeWrappers.set(messageId, wrapper);
+    wrapper.addEventListener("click", () => {
+      const info = badgeInfo.get(messageId);
+      if (!info?.original)
+        return;
+      ctx.ui.showConfirm({
+        title: "Original reply (before Psyche edit)",
+        message: info.original,
+        confirmLabel: "Close"
+      });
+    });
+  }
   const selected = () => snap?.characters.find((c) => c.id === selectedId) ?? snap?.characters[0] ?? null;
   function renderChips() {
     if (!snap || !snap.characters.length) {
@@ -278,6 +314,7 @@ function setup(ctx) {
     const { characterId } = ctx.getActiveChat();
     ctx.sendToBackend({ type: "get_state" });
     ctx.sendToBackend({ type: "get_player_profile" });
+    ctx.sendToBackend({ type: "get_edited_messages" });
   };
   function fillConnectionSelect(el, savedId) {
     const opts = ['<option value="">Same as the prose model</option>'];
@@ -343,6 +380,7 @@ ${t.response}`;
   });
   ctx.events.on("CHAT_SWITCHED", () => {
     selectedId = null;
+    clearBadges();
     requestState();
     requestDebug();
     requestEngine();
@@ -381,6 +419,7 @@ ${t.response}`;
       type: "set_config",
       config: {
         editorEnabled: edEnEl.checked,
+        editorBadge: edBadgeEl.checked,
         editorPrompt: edPromptEl.value,
         editorConnectionId: edConnEl.value
       }
@@ -464,6 +503,20 @@ ${t.response}`;
         playerEl.value = typeof p.profile === "string" ? p.profile : "";
         break;
       }
+      case "reply_edited": {
+        if (p.chatId && snap?.chatId && p.chatId !== snap.chatId)
+          break;
+        markEdited(String(p.messageId), String(p.chars ?? ""), String(p.original ?? ""));
+        break;
+      }
+      case "edited_messages": {
+        if (p.chatId && snap?.chatId && p.chatId !== snap.chatId)
+          break;
+        for (const e of Array.isArray(p.entries) ? p.entries : []) {
+          markEdited(String(e.messageId), String(e.chars ?? ""), String(e.original ?? ""));
+        }
+        break;
+      }
       case "config": {
         const c = p.config ?? {};
         enEl.checked = c.enabled !== false;
@@ -475,6 +528,15 @@ ${t.response}`;
         edEnEl.checked = c.editorEnabled === true;
         edPromptEl.value = c.editorPrompt ?? "";
         editorConnId = c.editorConnectionId ?? "";
+        const badgeNow = c.editorBadge !== false;
+        edBadgeEl.checked = badgeNow;
+        if (badgeNow !== badgeEnabled) {
+          badgeEnabled = badgeNow;
+          if (!badgeEnabled)
+            clearBadges();
+          else
+            ctx.sendToBackend({ type: "get_edited_messages" });
+        }
         editorPromptDefault = typeof p.editorPromptDefault === "string" ? p.editorPromptDefault : "";
         renderConnections();
         break;

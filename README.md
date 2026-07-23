@@ -69,7 +69,10 @@ description and a one-line summary. Everything else is rolled per run.
   you read it: show-don't-tell over inner monologue, the world through the
   partner's eyes, no assistant-isms, warts left in. What happens is preserved;
   how it reads is rewritten. The raw text streams in first, then is replaced in
-  place. Own model dropdown, prompt editor, and toggle in the panel.
+  place, and a small "✎ edited by Psyche" chip appears under the reply (click
+  it to view the original; toggleable). If the editor fails, a warning toast
+  says so and the raw reply stands. Own model dropdown, prompt editor, and
+  toggle in the panel.
 
 - **Energy-matched delivery.** Deterministic `delivery:` lines translate the
   state into how much the character says and how much effort it carries —

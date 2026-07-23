@@ -1519,7 +1519,8 @@ var DEFAULT_CONFIG = {
   humanTexture: true,
   editorEnabled: false,
   editorPrompt: DEFAULT_EDITOR_PROMPT,
-  editorConnectionId: ""
+  editorConnectionId: "",
+  editorBadge: true
 };
 var CONFIG_PATH = "config.json";
 var config = { ...DEFAULT_CONFIG };
@@ -1816,6 +1817,9 @@ ${text.trim()}` : "";
     } catch (err) {
       const m = err instanceof Error && err.name === "AbortError" ? "timed out" : String(err);
       spindle.log.warn(`[psyche] editor pass failed (reply kept as-is): ${m}`);
+      try {
+        spindle.toast.warning(`Editor pass failed \u2014 reply shown unedited (${m})`, { title: "Psyche", userId });
+      } catch {}
     }
     if (dbg.editor) {
       try {
@@ -1832,10 +1836,17 @@ ${text.trim()}` : "";
         spindle.log.info("[psyche] editor: message changed mid-edit; keeping the newer content");
         return reply;
       }
+      const at = Date.now();
+      const chars = `${reply.length}\u2192${edited.length}`;
       await spindle.chat.updateMessage(chatId, messageId, {
         content: edited,
-        ...swipeIdAtStart !== undefined ? { swipe_id: swipeIdAtStart } : {}
+        ...swipeIdAtStart !== undefined ? { swipe_id: swipeIdAtStart } : {},
+        metadata: {
+          ...row.metadata ?? {},
+          psyche_edited: { at, original: reply, chars }
+        }
       });
+      spindle.sendToFrontend({ type: "reply_edited", chatId, messageId, at, chars, original: reply }, userId);
       spindle.log.info(`[psyche] editor: rewrote reply (${reply.length} -> ${edited.length} chars)`);
       return edited;
     } catch (err) {
@@ -2006,7 +2017,8 @@ spindle.onFrontendMessage(async (payload, userId) => {
           humanTexture: Boolean(payload.config?.humanTexture ?? config.humanTexture),
           editorEnabled: Boolean(payload.config?.editorEnabled ?? config.editorEnabled),
           editorPrompt: payload.config?.editorPrompt === undefined ? config.editorPrompt : String(payload.config.editorPrompt ?? ""),
-          editorConnectionId: payload.config?.editorConnectionId === undefined ? config.editorConnectionId : String(payload.config.editorConnectionId ?? "")
+          editorConnectionId: payload.config?.editorConnectionId === undefined ? config.editorConnectionId : String(payload.config.editorConnectionId ?? ""),
+          editorBadge: Boolean(payload.config?.editorBadge ?? config.editorBadge)
         };
         await saveConfig();
         spindle.sendToFrontend({ type: "config", config, editorPromptDefault: DEFAULT_EDITOR_PROMPT }, userId);
@@ -2098,6 +2110,31 @@ spindle.onFrontendMessage(async (payload, userId) => {
           await saveRun(run);
         }
         await sendState(chatId, userId);
+        break;
+      }
+      case "get_edited_messages": {
+        const chatId = await activeChatId(payload.chatId, userId);
+        let entries = [];
+        if (chatId) {
+          try {
+            const msgs = await spindle.chat.getMessages(chatId);
+            for (const m of msgs) {
+              const meta = m.metadata;
+              const e = meta?.psyche_edited;
+              if (e) {
+                entries.push({
+                  messageId: m.id,
+                  at: Number(e.at ?? 0),
+                  chars: String(e.chars ?? ""),
+                  original: String(e.original ?? "")
+                });
+              }
+            }
+          } catch (err) {
+            spindle.log.warn(`[psyche] get_edited_messages failed: ${String(err)}`);
+          }
+        }
+        spindle.sendToFrontend({ type: "edited_messages", chatId, entries, badge: config.editorBadge }, userId);
         break;
       }
       case "get_player_profile": {

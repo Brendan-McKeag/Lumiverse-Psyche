@@ -50,6 +50,8 @@ interface Config {
   editorPrompt: string
   /** connection id for the editor call; '' = same as the prose model */
   editorConnectionId: string
+  /** show the ✎ chip on edited replies in the chat window */
+  editorBadge: boolean
 }
 
 const DEFAULT_CONFIG: Config = {
@@ -63,6 +65,7 @@ const DEFAULT_CONFIG: Config = {
   editorEnabled: false,
   editorPrompt: DEFAULT_EDITOR_PROMPT,
   editorConnectionId: '',
+  editorBadge: true,
 }
 const CONFIG_PATH = 'config.json'
 
@@ -438,6 +441,13 @@ async function runEditor(chatId: string, messageId: string, reply: string, userI
     } catch (err) {
       const m = err instanceof Error && err.name === 'AbortError' ? 'timed out' : String(err)
       spindle.log.warn(`[psyche] editor pass failed (reply kept as-is): ${m}`)
+      // Surface silent failures in the main window — a dead editor connection
+      // otherwise looks identical to the editor being off.
+      try {
+        spindle.toast.warning(`Editor pass failed — reply shown unedited (${m})`, { title: 'Psyche', userId })
+      } catch {
+        /* toast is best-effort */
+      }
     }
     if (dbg.editor) {
       try {
@@ -458,10 +468,20 @@ async function runEditor(chatId: string, messageId: string, reply: string, userI
         spindle.log.info('[psyche] editor: message changed mid-edit; keeping the newer content')
         return reply
       }
+      // Record the edit on the message itself (extra.spindle_metadata) so the
+      // chat window can badge it — merged so other extensions' metadata survives
+      // (updateMessage replaces spindle_metadata wholesale).
+      const at = Date.now()
+      const chars = `${reply.length}→${edited.length}`
       await spindle.chat.updateMessage(chatId, messageId, {
         content: edited,
         ...(swipeIdAtStart !== undefined ? { swipe_id: swipeIdAtStart } : {}),
+        metadata: {
+          ...((row as { metadata?: Record<string, unknown> }).metadata ?? {}),
+          psyche_edited: { at, original: reply, chars },
+        },
       })
+      spindle.sendToFrontend({ type: 'reply_edited', chatId, messageId, at, chars, original: reply }, userId)
       spindle.log.info(`[psyche] editor: rewrote reply (${reply.length} -> ${edited.length} chars)`)
       return edited
     } catch (err) {
@@ -682,6 +702,7 @@ spindle.onFrontendMessage(async (payload: any, userId) => {
           payload.config?.editorConnectionId === undefined
             ? config.editorConnectionId
             : String(payload.config.editorConnectionId ?? ''),
+        editorBadge: Boolean(payload.config?.editorBadge ?? config.editorBadge),
       }
       await saveConfig()
       spindle.sendToFrontend({ type: 'config', config, editorPromptDefault: DEFAULT_EDITOR_PROMPT }, userId)
@@ -785,6 +806,34 @@ spindle.onFrontendMessage(async (payload: any, userId) => {
         await saveRun(run)
       }
       await sendState(chatId, userId)
+      break
+    }
+
+    case 'get_edited_messages': {
+      // Backfill: which messages in this chat carry our edit marker, so the
+      // panel can re-badge them after a reload or chat switch.
+      const chatId = await activeChatId(payload.chatId, userId)
+      let entries: { messageId: string; at: number; chars: string; original: string }[] = []
+      if (chatId) {
+        try {
+          const msgs = await spindle.chat.getMessages(chatId)
+          for (const m of msgs) {
+            const meta = (m as { metadata?: Record<string, unknown> }).metadata
+            const e = meta?.psyche_edited as { at?: number; chars?: string; original?: string } | undefined
+            if (e) {
+              entries.push({
+                messageId: m.id,
+                at: Number(e.at ?? 0),
+                chars: String(e.chars ?? ''),
+                original: String(e.original ?? ''),
+              })
+            }
+          }
+        } catch (err) {
+          spindle.log.warn(`[psyche] get_edited_messages failed: ${String(err)}`)
+        }
+      }
+      spindle.sendToFrontend({ type: 'edited_messages', chatId, entries, badge: config.editorBadge }, userId)
       break
     }
 
