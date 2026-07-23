@@ -161,6 +161,38 @@ async function characterForChat(
   }
 }
 
+/* ------------------ connection for out-of-band calls ---------------- *
+ * A quiet generation with no connection_id makes the host fall back to the
+ * user's DEFAULT-flagged profile (is_default) — NOT the model the chat is
+ * using. Users who never flag a default get "No connection profile found"
+ * even with profiles configured and a model assigned to the chat. So when a
+ * dropdown is on "Auto" we resolve an explicit id ourselves:
+ * last-loaded profile (closest thing to "the prose model" an extension can
+ * see) -> default-flagged -> the first profile.
+ */
+
+const lastLoadedConn = new Map<string, string>() // user scope -> connection id
+
+spindle.on('CONNECTION_PROFILE_LOADED', (payload, userId) => {
+  const id = (payload as { id?: string })?.id
+  if (typeof id === 'string' && id) lastLoadedConn.set(userId ?? '', id)
+})
+
+async function resolveQuietConnection(configured: string, userId?: string): Promise<string | undefined> {
+  if (configured) return configured
+  try {
+    const list = await spindle.connections.list(userId)
+    if (!list.length) return undefined // let the host raise its own error
+    const last = lastLoadedConn.get(userId ?? '')
+    if (last && list.some((c) => c.id === last)) return last
+    const def = list.find((c) => (c as { is_default?: boolean }).is_default)
+    return (def ?? list[0]).id
+  } catch (err) {
+    spindle.log.warn(`[psyche] could not resolve a connection (falling back to host default): ${String(err)}`)
+    return undefined
+  }
+}
+
 /* ------------------------ transcript + card ------------------------ */
 
 const MAX_TRANSCRIPT_CHARS = 120_000
@@ -244,6 +276,7 @@ async function runAgentForChat(chatId: string, reply: string, userId?: string) {
 
     const fullChar = await spindle.characters.get(char.id, userId).catch(() => null)
     const cardContext = buildCardContext(fullChar)
+    const agentConn = await resolveQuietConnection(config.agentConnectionId, userId)
 
     // ── seed (once per run) ──────────────────────────────────────────
     // Persist the rolled persona IMMEDIATELY, before the heavier update pass.
@@ -256,7 +289,7 @@ async function runAgentForChat(chatId: string, reply: string, userId?: string) {
         seededNote = await seedRun(run, primary, cardContext, {
           signal: AbortSignal.timeout(config.agentTimeoutMs),
           userId,
-          connectionId: config.agentConnectionId || undefined,
+          connectionId: agentConn,
           onTrace: (t) => (dbg.seed = capTrace(t)),
         })
       } catch (err) {
@@ -281,7 +314,7 @@ async function runAgentForChat(chatId: string, reply: string, userId?: string) {
         directive: config.directive,
         signal: AbortSignal.timeout(config.agentTimeoutMs),
         userId,
-        connectionId: config.agentConnectionId || undefined,
+        connectionId: agentConn,
         onTrace: (t) => (dbg.update = capTrace(t)),
       })
     } catch (err) {
@@ -299,7 +332,7 @@ async function runAgentForChat(chatId: string, reply: string, userId?: string) {
       await ruminate(run, transcript.slice(-6000), {
         signal: AbortSignal.timeout(config.agentTimeoutMs),
         userId,
-        connectionId: config.agentConnectionId || undefined,
+        connectionId: agentConn,
         onTrace: (t) => (dbg.rumination = capTrace(t)),
         playerProfile,
       })
@@ -435,7 +468,7 @@ async function runEditor(chatId: string, messageId: string, reply: string, userI
       edited = await editReply(run ?? emptyRun(chatId), sceneTail, reply, config.editorPrompt, {
         signal: AbortSignal.timeout(config.agentTimeoutMs),
         userId,
-        connectionId: config.editorConnectionId || undefined,
+        connectionId: await resolveQuietConnection(config.editorConnectionId, userId),
         onTrace: (t) => (dbg.editor = capTrace(t)),
       })
     } catch (err) {
@@ -444,7 +477,10 @@ async function runEditor(chatId: string, messageId: string, reply: string, userI
       // Surface silent failures in the main window — a dead editor connection
       // otherwise looks identical to the editor being off.
       try {
-        spindle.toast.warning(`Editor pass failed — reply shown unedited (${m})`, { title: 'Psyche', userId })
+        const hint = m.includes('No connection profile')
+          ? 'Editor needs a model: pick one in the Psyche panel, or mark a connection profile as default in Lumiverse.'
+          : `Editor pass failed — reply shown unedited (${m})`
+        spindle.toast.warning(hint, { title: 'Psyche', userId })
       } catch {
         /* toast is best-effort */
       }
@@ -765,7 +801,7 @@ spindle.onFrontendMessage(async (payload: any, userId) => {
       const fullChar = await spindle.characters.get(char.id, userId).catch(() => null)
       const note = await seedRun(run, primary, buildCardContext(fullChar), {
         userId,
-        connectionId: config.agentConnectionId || undefined,
+        connectionId: await resolveQuietConnection(config.agentConnectionId, userId),
       })
       run.seeded = true
       await saveRun(run)

@@ -103,7 +103,7 @@ function setup(ctx) {
         <label class="ps-row"><input type="checkbox" class="ps-ed-en" /> Edit replies before display</label>
         <label class="ps-row"><input type="checkbox" class="ps-ed-badge" /> Show ✎ badge on edited replies (click badge to view the original)</label>
         <div><span class="ps-muted">Style directives</span><textarea class="ps-ta ps-ed-prompt" style="min-height:140px" placeholder="How the editor should reshape the prose."></textarea></div>
-        <div><span class="ps-muted">Editor model</span><select class="ps-input ps-ed-conn"><option value="">Same as the prose model</option></select></div>
+        <div><span class="ps-muted">Editor model</span><select class="ps-input ps-ed-conn"><option value="">Auto — last-used or default connection</option></select></div>
         <div class="ps-row">
           <button class="ps-btn ps-ed-save">Save editor</button>
           <button class="ps-btn ps-ed-reset">Reset prompt to default</button>
@@ -127,7 +127,7 @@ function setup(ctx) {
         <div><span class="ps-muted">Engine rounds per turn</span><input type="number" class="ps-input ps-rounds" min="1" max="20" /></div>
         <div><span class="ps-muted">Decay rate (0–1, relax toward baseline)</span><input type="number" class="ps-input ps-decay" min="0" max="1" step="0.01" /></div>
         <div><span class="ps-muted">Engine directive (optional)</span><textarea class="ps-ta ps-dir" placeholder="e.g. Slow-burn; keep characters guarded until trust is earned."></textarea></div>
-        <div><span class="ps-muted">Engine model (separate connection for Psyche's bookkeeping)</span><select class="ps-input ps-conn"><option value="">Same as the prose model</option></select></div>
+        <div><span class="ps-muted">Engine model (separate connection for Psyche's bookkeeping)</span><select class="ps-input ps-conn"><option value="">Auto — last-used or default connection</option></select></div>
         <div class="ps-row"><button class="ps-btn ps-save-cfg">Save settings</button></div>
       </div>
 
@@ -317,7 +317,7 @@ function setup(ctx) {
     ctx.sendToBackend({ type: "get_edited_messages" });
   };
   function fillConnectionSelect(el, savedId) {
-    const opts = ['<option value="">Same as the prose model</option>'];
+    const opts = ['<option value="">Auto — last-used or default connection</option>'];
     for (const c of connOptions) {
       const label = `${c.name} — ${c.provider}/${c.model}`;
       opts.push(`<option value="${esc(c.id)}"${c.id === savedId ? " selected" : ""}>${esc(label)}</option>`);

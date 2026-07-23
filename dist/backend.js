@@ -1590,6 +1590,29 @@ async function characterForChat(chatId, userId) {
     return null;
   }
 }
+var lastLoadedConn = new Map;
+spindle.on("CONNECTION_PROFILE_LOADED", (payload, userId) => {
+  const id = payload?.id;
+  if (typeof id === "string" && id)
+    lastLoadedConn.set(userId ?? "", id);
+});
+async function resolveQuietConnection(configured, userId) {
+  if (configured)
+    return configured;
+  try {
+    const list = await spindle.connections.list(userId);
+    if (!list.length)
+      return;
+    const last = lastLoadedConn.get(userId ?? "");
+    if (last && list.some((c) => c.id === last))
+      return last;
+    const def = list.find((c) => c.is_default);
+    return (def ?? list[0]).id;
+  } catch (err) {
+    spindle.log.warn(`[psyche] could not resolve a connection (falling back to host default): ${String(err)}`);
+    return;
+  }
+}
 var MAX_TRANSCRIPT_CHARS = 120000;
 async function buildTranscript(chatId, reply) {
   const lines = [];
@@ -1672,6 +1695,7 @@ async function runAgentForChat(chatId, reply, userId) {
     const primary = ensurePrimary(run, char.id, char.name);
     const fullChar = await spindle.characters.get(char.id, userId).catch(() => null);
     const cardContext = buildCardContext(fullChar);
+    const agentConn = await resolveQuietConnection(config.agentConnectionId, userId);
     let seededNote = "";
     if (!run.seeded) {
       emitEngine(chatId, "running", "seeding character", userId);
@@ -1679,7 +1703,7 @@ async function runAgentForChat(chatId, reply, userId) {
         seededNote = await seedRun(run, primary, cardContext, {
           signal: AbortSignal.timeout(config.agentTimeoutMs),
           userId,
-          connectionId: config.agentConnectionId || undefined,
+          connectionId: agentConn,
           onTrace: (t) => dbg.seed = capTrace(t)
         });
       } catch (err) {
@@ -1703,7 +1727,7 @@ async function runAgentForChat(chatId, reply, userId) {
         directive: config.directive,
         signal: AbortSignal.timeout(config.agentTimeoutMs),
         userId,
-        connectionId: config.agentConnectionId || undefined,
+        connectionId: agentConn,
         onTrace: (t) => dbg.update = capTrace(t)
       });
     } catch (err) {
@@ -1717,7 +1741,7 @@ async function runAgentForChat(chatId, reply, userId) {
       await ruminate(run, transcript.slice(-6000), {
         signal: AbortSignal.timeout(config.agentTimeoutMs),
         userId,
-        connectionId: config.agentConnectionId || undefined,
+        connectionId: agentConn,
         onTrace: (t) => dbg.rumination = capTrace(t),
         playerProfile
       });
@@ -1811,14 +1835,15 @@ ${text.trim()}` : "";
       edited = await editReply(run ?? emptyRun(chatId), sceneTail, reply, config.editorPrompt, {
         signal: AbortSignal.timeout(config.agentTimeoutMs),
         userId,
-        connectionId: config.editorConnectionId || undefined,
+        connectionId: await resolveQuietConnection(config.editorConnectionId, userId),
         onTrace: (t) => dbg.editor = capTrace(t)
       });
     } catch (err) {
       const m = err instanceof Error && err.name === "AbortError" ? "timed out" : String(err);
       spindle.log.warn(`[psyche] editor pass failed (reply kept as-is): ${m}`);
       try {
-        spindle.toast.warning(`Editor pass failed \u2014 reply shown unedited (${m})`, { title: "Psyche", userId });
+        const hint = m.includes("No connection profile") ? "Editor needs a model: pick one in the Psyche panel, or mark a connection profile as default in Lumiverse." : `Editor pass failed \u2014 reply shown unedited (${m})`;
+        spindle.toast.warning(hint, { title: "Psyche", userId });
       } catch {}
     }
     if (dbg.editor) {
@@ -2069,7 +2094,7 @@ spindle.onFrontendMessage(async (payload, userId) => {
         const fullChar = await spindle.characters.get(char.id, userId).catch(() => null);
         const note = await seedRun(run, primary, buildCardContext(fullChar), {
           userId,
-          connectionId: config.agentConnectionId || undefined
+          connectionId: await resolveQuietConnection(config.agentConnectionId, userId)
         });
         run.seeded = true;
         await saveRun(run);
