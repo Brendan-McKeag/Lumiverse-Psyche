@@ -25,8 +25,6 @@ interface Character {
   identity: string
   persona: string
   demeanor: string
-  intent: string
-  move: string
   approval: number
   approvalLabel: string
   canon: string
@@ -73,7 +71,6 @@ export function setup(ctx: SpindleFrontendContext) {
     .ps-sheet { display:flex; flex-direction:column; gap:4px; }
     .ps-sheet .sk { font-size:11px; font-weight:600; }
     .ps-demeanor { font-size:12px; font-style:italic; line-height:1.45; padding:8px 10px; border-left:2px solid var(--lumiverse-accent,#6c8cff); background:var(--lumiverse-fill-subtle); border-radius:var(--lumiverse-radius); }
-    .ps-intent { font-size:11.5px; color:var(--lumiverse-accent,#6c8cff); padding:2px 2px; }
     .ps-btn.sel { border-color:var(--lumiverse-accent,#6c8cff); color:var(--lumiverse-accent,#6c8cff); }
     .ps-pre { white-space:pre-wrap; word-break:break-word; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:10.5px; line-height:1.4; max-height:360px; overflow:auto; padding:8px; background:var(--lumiverse-fill-subtle); border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius); }
     .ps-engine { font-size:12px; font-weight:600; padding:6px 10px; border-radius:var(--lumiverse-radius); border:1px solid var(--lumiverse-border); text-align:center; }
@@ -110,8 +107,6 @@ export function setup(ctx: SpindleFrontendContext) {
         </div>
         <div class="ps-muted ps-d-identity"></div>
         <div class="ps-demeanor" style="display:none"></div>
-        <div class="ps-muted ps-intent" style="display:none"></div>
-        <div class="ps-muted ps-intent ps-move" style="display:none"></div>
 
         <h4 class="ps-h">Goals &amp; desires (one per line)</h4>
         <textarea class="ps-ta ps-goals" placeholder="What this character is pursuing, in their own interest."></textarea>
@@ -208,8 +203,6 @@ export function setup(ctx: SpindleFrontendContext) {
   const dName = q<HTMLElement>('.ps-d-name')
   const dIdentity = q<HTMLElement>('.ps-d-identity')
   const demeanorEl = q<HTMLElement>('.ps-demeanor')
-  const intentEl = q<HTMLElement>('.ps-intent:not(.ps-move)')
-  const moveEl = q<HTMLElement>('.ps-move')
   const playerEl = q<HTMLTextAreaElement>('.ps-player')
   const presentEl = q<HTMLInputElement>('.ps-present')
   const personaEl = q<HTMLTextAreaElement>('.ps-persona')
@@ -358,18 +351,6 @@ export function setup(ctx: SpindleFrontendContext) {
       demeanorEl.style.display = 'block'
     } else {
       demeanorEl.style.display = 'none'
-    }
-    if (c.intent && c.intent.trim()) {
-      intentEl.textContent = `→ wants: ${c.intent}`
-      intentEl.style.display = 'block'
-    } else {
-      intentEl.style.display = 'none'
-    }
-    if (c.move && c.move.trim()) {
-      moveEl.textContent = `→ move: ${c.move}`
-      moveEl.style.display = 'block'
-    } else {
-      moveEl.style.display = 'none'
     }
     presentEl.checked = c.present
 

@@ -42,19 +42,18 @@ description and a one-line summary. Everything else is rolled per run.
   specific, consistent person over the run instead of vague improv.
 
 - **Real agency, not a yes-man.** Each character carries durable **goals &
-  desires** and a per-turn **intent** (what they want now + the move they're
-  likely to make). The injected guidance pushes the writer model to have them
-  take initiative, steer the scene, set conditions, and push back or refuse —
-  pursuing their own agenda, not mirroring the player.
+  desires**. The injected guidance pushes the writer model to have them take
+  initiative, steer the scene, set conditions, and push back or refuse —
+  pursuing their own agenda, not mirroring the player. Deliberately no
+  pre-planned "next action" is handed to the writer — mood, goals, and canon
+  steer it; the specific move stays improvised, not scripted in advance.
 
-- **An invested partner, not a service provider.** Every turn the rumination
-  stage also emits a **move** — one concrete story-driving contribution of the
-  character's own (a plan, proposal, complication, callback). A live
-  **investment register** derived from the affect vector tells the writer how
-  much the character is enjoying the scene: when the player serves their goals
-  they visibly light up, give more, and initiate; when their goals are ignored
-  they don't fake enthusiasm — they push their agenda or disengage. Enjoyment
-  is earned, and it shows.
+- **An invested partner, not a service provider.** A live **investment
+  register** derived from the affect vector tells the writer how much the
+  character is enjoying the scene: when the player serves their goals they
+  visibly light up, give more, and initiate; when their goals are ignored they
+  don't fake enthusiasm — they push their agenda or disengage. Enjoyment is
+  earned, and it shows.
 
 - **A player profile (per character card).** A freeform note about the **human
   behind the player-character** — interests, goals, kinks, hard lines — edited

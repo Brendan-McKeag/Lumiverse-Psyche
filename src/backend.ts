@@ -660,8 +660,6 @@ function snapshotRun(run: RunState) {
     identity: c.identity,
     persona: c.persona,
     demeanor: c.demeanor ?? '',
-    intent: c.intent ?? '',
-    move: c.move ?? '',
     approval: c.approval ?? 0,
     approvalLabel: describeApproval(c.approval ?? 0).label,
     canon: c.canon ?? '',

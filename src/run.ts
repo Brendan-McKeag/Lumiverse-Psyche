@@ -69,14 +69,6 @@ export interface CharacterState {
    * always recomputed live so manual value edits still bite immediately.
    */
   demeanor?: string
-  /** Dynamic: what they want right now and the move they are likely to make. */
-  intent?: string
-  /**
-   * Dynamic: their story-driving contribution this turn — a plan, proposal,
-   * complication, revelation, or callback that is THEIRS, not a reaction to the
-   * player. Refreshed each rumination, same lifecycle as demeanor/intent.
-   */
-  move?: string
   updatedAt: number
 }
 
@@ -445,14 +437,13 @@ function characterBlock(c: CharacterState, humanTexture = true): string {
   const override = overrideDirective(c)
   if (override) lines.push(override) // highest priority — placed first, before anything moderating
 
-  // A stored demeanor/intent describes a calmer past moment; when a strong override
-  // is active (e.g. a hand-set extreme) that brief would only moderate it, so drop it.
+  // A stored demeanor describes a calmer past moment; when a strong override is
+  // active (e.g. a hand-set extreme) that brief would only moderate it, so drop it.
+  // Deliberately NOT prescribing a specific "wants/likely to" or "next move" line
+  // here — pre-planning a concrete action ahead of the prose boxes the writer in
+  // instead of letting it emerge; mood, goals, and canon are steer enough.
   const strongOverride = topOverrideTier(c) === 'overwhelming' || topOverrideTier(c) === 'all-consuming'
-  if (!strongOverride) {
-    if (c.demeanor && c.demeanor.trim()) lines.push(c.demeanor.trim())
-    if (c.intent && c.intent.trim()) lines.push(`Wants right now / likely to: ${c.intent.trim()}`)
-    if (c.move && c.move.trim()) lines.push(`Their move this scene: ${c.move.trim()}`)
-  }
+  if (!strongOverride && c.demeanor && c.demeanor.trim()) lines.push(c.demeanor.trim())
 
   lines.push('')
   lines.push('Underneath (embody — do not narrate or name any of this):')

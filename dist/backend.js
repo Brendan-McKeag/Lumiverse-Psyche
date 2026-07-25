@@ -442,14 +442,8 @@ function characterBlock(c, humanTexture = true) {
   if (override)
     lines.push(override);
   const strongOverride = topOverrideTier(c) === "overwhelming" || topOverrideTier(c) === "all-consuming";
-  if (!strongOverride) {
-    if (c.demeanor && c.demeanor.trim())
-      lines.push(c.demeanor.trim());
-    if (c.intent && c.intent.trim())
-      lines.push(`Wants right now / likely to: ${c.intent.trim()}`);
-    if (c.move && c.move.trim())
-      lines.push(`Their move this scene: ${c.move.trim()}`);
-  }
+  if (!strongOverride && c.demeanor && c.demeanor.trim())
+    lines.push(c.demeanor.trim());
   lines.push("");
   lines.push("Underneath (embody \u2014 do not narrate or name any of this):");
   lines.push(groundedReadout(c));
@@ -1427,31 +1421,29 @@ function ruminateSystemPrompt() {
     "hostile one is not won over by one nice gesture.",
     "",
     "When a PLAYER PROFILE is provided, you also know what the PLAYER is here for.",
-    "When choosing each character's move, prefer moves that advance the character's",
-    "own goals ALONG a line the player's interests would enjoy \u2014 that intersection is",
-    "the best move on the board. Do not force it; a character never abandons their own",
-    "agenda or nature to service the profile, and never acknowledges it in-fiction.",
+    "Bias each character's underlying pull toward their own goals ALONG a line the",
+    "player's interests would enjoy when the two can genuinely align \u2014 but do not",
+    "force it, and never have a character abandon their own agenda or nature to",
+    "service the profile, or acknowledge it in-fiction.",
     "",
-    "Output three fields per character:",
+    "Output ONE field per character:",
     "  directive \u2014 3-5 sentences of concrete behavioral direction for the prose writer:",
-    "    what this character DOES this turn given how they feel \u2014 manner, tone, what",
-    "    they pursue, what they resist or withhold, the move they make, how the feelings",
-    "    reshape their choices and voice away from baseline. Include the ENERGY of their",
-    "    delivery: how much they say, how much effort it carries, whether they engage or",
-    "    withdraw. Write actions and bearing, not feelings; no emotion labels, no numbers.",
-    "  intent \u2014 1-2 sentences: what they want this moment and the concrete move they are",
-    "    likely to make to get it. THEIR agenda, driving the scene \u2014 not the player's.",
-    "  move \u2014 1 sentence: one concrete story-driving contribution they make or set up",
-    "    this turn (a plan, proposal, complication, revelation, callback) \u2014 THEIR",
-    "    addition to the story, not a reaction to the player. May be empty only when",
-    "    their state says they'd withhold (sulking, drained, guarded).",
+    "    manner, tone, what they lean toward or away from, what they resist or withhold,",
+    "    how the feelings reshape their voice away from baseline. Include the ENERGY of",
+    "    their delivery: how much they say, how much effort it carries, whether they",
+    "    engage or withdraw. Write actions and bearing, not feelings; no emotion labels,",
+    "    no numbers.",
+    "  Deliberately do NOT hand the writer a specific planned action, plot beat, or line",
+    "  of dialogue to execute \u2014 that pre-scripts the scene and flattens what should stay",
+    "  improvised. Describe the character's state and pull; let the writer discover what",
+    "  they actually do and say.",
     "",
     "Honor an OVERRIDING STATE at full force: if a feeling is all-consuming the character",
     "is run by it and breaks from their usual self \u2014 do NOT moderate it back toward their",
     "persona or composure. Canon facts stay fixed truth. Do not write dialogue or narrate",
     "events that have not happened yet.",
     "",
-    'Return ONLY JSON: { "<id>": { "directive": "<...>", "intent": "<...>", "move": "<...>" }, ... }'
+    'Return ONLY JSON: { "<id>": { "directive": "<...>" }, ... }'
   ].join(`
 `);
 }
@@ -1490,7 +1482,7 @@ ${(c.canon ?? "").trim()}` : "",
         "Characters (persona, canon, goals, current emotional state):",
         blocks,
         "",
-        "Ruminate, then write each one's directive + intent + move. Return only the JSON."
+        "Ruminate, then write each one's directive. Return only the JSON."
       ].filter(Boolean).join(`
 `)
     }
@@ -1525,9 +1517,6 @@ ${(c.canon ?? "").trim()}` : "",
     const directive = typeof o.directive === "string" ? o.directive : typeof o.demeanor === "string" ? o.demeanor : "";
     if (directive.trim())
       c.demeanor = directive.trim();
-    if (typeof o.intent === "string" && o.intent.trim())
-      c.intent = o.intent.trim();
-    c.move = typeof o.move === "string" && o.move.trim() ? o.move.trim() : undefined;
   }
 }
 var DEFAULT_EDITOR_PROMPT = [
@@ -1580,7 +1569,6 @@ function editorCharacterBrief(run) {
     `### ${c.name}${c.isPrimary ? "" : " (supporting)"}`,
     c.persona.trim() ? `persona: ${c.persona.trim()}` : "",
     (c.goals ?? []).length ? `goals: ${(c.goals ?? []).join("; ")}` : "",
-    c.intent?.trim() ? `wants right now: ${c.intent.trim()}` : "",
     c.demeanor?.trim() ? `current bearing: ${c.demeanor.trim()}` : ""
   ].filter(Boolean).join(`
 `)).join(`
@@ -2105,8 +2093,6 @@ function snapshotRun(run) {
     identity: c.identity,
     persona: c.persona,
     demeanor: c.demeanor ?? "",
-    intent: c.intent ?? "",
-    move: c.move ?? "",
     approval: c.approval ?? 0,
     approvalLabel: describeApproval(c.approval ?? 0).label,
     canon: c.canon ?? "",
