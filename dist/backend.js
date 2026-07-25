@@ -300,43 +300,48 @@ var APPROVAL_BANDS = [
     neg: { label: "implacable enemy", meaning: "absolute; nothing could mend it \u2014 destroying the player is a purpose in itself" }
   },
   {
+    at: 9000,
+    pos: { label: "transcendent", meaning: "beyond ordinary loyalty; the player's wellbeing IS their own \u2014 hard to imagine a line that would break this" },
+    neg: { label: "irredeemable", meaning: "beyond ordinary enmity; harming the player has become how they measure a good day" }
+  },
+  {
     at: 8000,
     pos: { label: "inseparable", meaning: "near-absolute; only a fundamental betrayal could shake it, and they would not believe it at first" },
     neg: { label: "irreconcilable", meaning: "near-absolute enmity; only an extraordinary act could crack it, and they would distrust it as a trick" }
   },
   {
-    at: 5500,
+    at: 7000,
     pos: { label: "lifelong", meaning: "identity-level attachment; they would uproot their life for the player without being asked" },
     neg: { label: "sworn against", meaning: "a dedicated enemy; opposes the player at real personal cost, and plans ahead to do it" }
   },
   {
-    at: 3500,
+    at: 6000,
     pos: { label: "bound", meaning: "the player is family, inner circle; loyalty survives serious tests and public cost" },
     neg: { label: "embittered", meaning: "hatred woven into who they are; sabotages on sight, poisons others against the player" }
   },
   {
-    at: 2000,
+    at: 5000,
     pos: { label: "profoundly loyal", meaning: "stakes their own safety and standing on the player as a matter of course" },
     neg: { label: "vengeful", meaning: "actively seeks to harm or thwart the player, not just refuse them" }
   },
   {
-    at: 1000,
+    at: 4000,
     pos: { label: "devoted", meaning: "their default is yes, even at real cost to themselves \u2014 a betrayal here would be shattering" },
     neg: { label: "hostile", meaning: "their default is no; only self-interest or coercion moves them to cooperate" }
   },
   {
-    at: 400,
+    at: 3000,
     pos: { label: "deeply trusted", meaning: "extends serious latitude \u2014 takes risks on the player's word alone" },
     neg: { label: "resented", meaning: "actively resists, tests, or undermines; any cooperation is strictly transactional" }
   },
   {
-    at: 150,
+    at: 2000,
     pos: { label: "trusted", meaning: "will go along with requests that cut against their own preferences, within reason" },
     neg: { label: "disliked", meaning: "needs convincing even for reasonable asks; pushes back readily" }
   },
   {
-    at: 50,
-    pos: { label: "warm", meaning: "openly at ease; shares more, volunteers help" },
+    at: 1000,
+    pos: { label: "warm", meaning: "openly at ease; shares more, volunteers help, extends real trust" },
     neg: { label: "distrustful", meaning: "guarded; verifies claims, keeps things back" }
   },
   {
