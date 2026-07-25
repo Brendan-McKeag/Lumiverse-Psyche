@@ -64,6 +64,17 @@ description and a one-line summary. Everything else is rolled per run.
   serve it. The player is never given emotion stats — feelings stay the
   characters' alone.
 
+- **An approval ledger (RPG-style).** Every character carries a durable
+  **approval** of the player, −10000…+10000 (neutral 0), moved ±1–10 at a time
+  by the mind engine when the player's actions align with — or cut against —
+  the character's *genuine* wishes (persona, goals, values, canon; not their
+  stated demands). Unlike feelings it never decays. It gates trust and
+  willingness: high approval buys latitude, even against the character's own
+  preferences; low approval means guardedness, pushback, refusal. Graduated
+  bands run from "mildly favorable/wary" through devoted/hostile all the way
+  to "unshakeable bond"/"implacable enemy" at the pegged extremes. Visible and
+  editable in the panel above the affect bars.
+
 - **An editing pass (off by default).** A final LLM call rewrites each reply —
   including swipes, regens, and continues — per an editable style prompt before
   you read it: show-don't-tell over inner monologue, the world through the

@@ -37,6 +37,15 @@ export interface CharacterState {
   present: boolean
   /** the 40-dim affect vector: per-key current value + resting baseline */
   emotions: Record<string, { value: number; baseline: number }>
+  /**
+   * APPROVAL — the BG3-style ledger of this character's accumulated opinion of
+   * the player, -10000..+10000, starting neutral at 0. Unlike the affect vector
+   * it never decays and accumulates linearly, in small increments (±1..10 per
+   * adjustment). It gates trust and willingness: high approval buys latitude —
+   * going along even against their own preferences; low approval means
+   * guardedness, pushback, refusal.
+   */
+  approval?: number
   /** free-form, fully engine-controlled sheet sections (name -> markdown) */
   sheet: Record<string, string>
   /**
@@ -109,6 +118,7 @@ export function newCharacter(id: string, name: string, isPrimary: boolean): Char
     persona: '',
     present: isPrimary,
     emotions: neutralVector(),
+    approval: 0,
     sheet: {},
     canon: '',
     goals: [],
@@ -120,6 +130,7 @@ export function newCharacter(id: string, name: string, isPrimary: boolean): Char
 export function backfillEmotions(c: CharacterState) {
   const nv = neutralVector()
   for (const k of Object.keys(nv)) if (!c.emotions[k]) c.emotions[k] = nv[k]
+  c.approval ??= 0 // de-facto per-character migration hook; older runs predate approval
 }
 
 export function slugify(name: string): string {
@@ -203,6 +214,92 @@ export function groundedReadout(c: CharacterState): string {
 
   if (lines.length === 2) lines.push('  (emotionally quiet, even-keeled)')
   return lines.join('\n')
+}
+
+/* ---------------------------- approval ------------------------------ */
+/*
+ * The approval LEDGER (BG3-style). Typical adjustments are ±1-3 per turn, so
+ * real play lives within a few hundred points — the bands below are non-linear
+ * on purpose, meaningful long before ±10000. The extremes represent hundreds
+ * of hours of consistent behavior: effectively asymptotic, like the affect
+ * vector's high end.
+ */
+
+export const APPROVAL_MIN = -10000
+export const APPROVAL_MAX = 10000
+
+interface ApprovalBand {
+  at: number // band applies when |approval| >= at (bands checked high to low)
+  pos: { label: string; meaning: string }
+  neg: { label: string; meaning: string }
+}
+
+const APPROVAL_BANDS: ApprovalBand[] = [
+  {
+    at: 10000,
+    pos: { label: 'unshakeable bond', meaning: 'absolute; nothing the player could do would break it — their lives are entwined' },
+    neg: { label: 'implacable enemy', meaning: 'absolute; nothing could mend it — destroying the player is a purpose in itself' },
+  },
+  {
+    at: 8000,
+    pos: { label: 'inseparable', meaning: 'near-absolute; only a fundamental betrayal could shake it, and they would not believe it at first' },
+    neg: { label: 'irreconcilable', meaning: 'near-absolute enmity; only an extraordinary act could crack it, and they would distrust it as a trick' },
+  },
+  {
+    at: 5500,
+    pos: { label: 'lifelong', meaning: 'identity-level attachment; they would uproot their life for the player without being asked' },
+    neg: { label: 'sworn against', meaning: 'a dedicated enemy; opposes the player at real personal cost, and plans ahead to do it' },
+  },
+  {
+    at: 3500,
+    pos: { label: 'bound', meaning: 'the player is family, inner circle; loyalty survives serious tests and public cost' },
+    neg: { label: 'embittered', meaning: 'hatred woven into who they are; sabotages on sight, poisons others against the player' },
+  },
+  {
+    at: 2000,
+    pos: { label: 'profoundly loyal', meaning: 'stakes their own safety and standing on the player as a matter of course' },
+    neg: { label: 'vengeful', meaning: 'actively seeks to harm or thwart the player, not just refuse them' },
+  },
+  {
+    at: 1000,
+    pos: { label: 'devoted', meaning: 'their default is yes, even at real cost to themselves — a betrayal here would be shattering' },
+    neg: { label: 'hostile', meaning: 'their default is no; only self-interest or coercion moves them to cooperate' },
+  },
+  {
+    at: 400,
+    pos: { label: 'deeply trusted', meaning: 'extends serious latitude — takes risks on the player\'s word alone' },
+    neg: { label: 'resented', meaning: 'actively resists, tests, or undermines; any cooperation is strictly transactional' },
+  },
+  {
+    at: 150,
+    pos: { label: 'trusted', meaning: 'will go along with requests that cut against their own preferences, within reason' },
+    neg: { label: 'disliked', meaning: 'needs convincing even for reasonable asks; pushes back readily' },
+  },
+  {
+    at: 50,
+    pos: { label: 'warm', meaning: 'openly at ease; shares more, volunteers help' },
+    neg: { label: 'distrustful', meaning: 'guarded; verifies claims, keeps things back' },
+  },
+  {
+    at: 10,
+    pos: { label: 'mildly favorable', meaning: 'a small benefit of the doubt, granted' },
+    neg: { label: 'mildly wary', meaning: 'a small benefit of the doubt, withheld' },
+  },
+]
+
+export function describeApproval(a: number): { label: string; meaning: string } {
+  const v = Math.max(APPROVAL_MIN, Math.min(APPROVAL_MAX, a))
+  for (const band of APPROVAL_BANDS) {
+    if (Math.abs(v) >= band.at) return v > 0 ? band.pos : band.neg
+  }
+  return { label: 'neutral', meaning: 'no formed opinion; trust and patience are at their defaults' }
+}
+
+/** The injected approval line — label carries the behavior, value gives continuity. */
+export function approvalLine(c: CharacterState): string {
+  const a = c.approval ?? 0
+  const d = describeApproval(a)
+  return `approval of the player: ${d.label} (${Math.round(a)}) — ${d.meaning}`
 }
 
 /* ------------------------ investment register ---------------------- */
@@ -354,6 +451,7 @@ function characterBlock(c: CharacterState, humanTexture = true): string {
   lines.push('')
   lines.push('Underneath (embody — do not narrate or name any of this):')
   lines.push(groundedReadout(c))
+  lines.push(`  ${approvalLine(c)}`)
   lines.push(`  investment in the scene: ${investmentRegister(c)}`)
   if (humanTexture) for (const d of deliveryRegister(c)) lines.push(`  delivery: ${d}`)
 
@@ -416,6 +514,10 @@ export function buildDirective(run: RunState, opts: DirectiveOpts = {}): string 
     '    own — a plan, an invitation, a complication, a confession, a callback to',
     '    earlier events — drawn from their goals and canon. They don\'t wait to be',
     '    prompted; the scene is theirs to move as much as the player\'s.',
+    '  • APPROVAL is each character\'s accumulated opinion of the player. High',
+    '    approval buys trust and willingness — they\'ll go along even when it cuts',
+    '    against their own wishes. Low approval means guardedness, pushback,',
+    '    refusal. It moves slowly; act the current level, don\'t leap ahead of it.',
     '',
     'EMBODIMENT: act their state through behavior — posture, tone, word choice, what',
     'they reach for and hold back; let stronger feelings break composure and',

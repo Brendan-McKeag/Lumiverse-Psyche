@@ -13,6 +13,9 @@ import {
   ensureInjectionEntry,
   isInjectionEntry,
   slugify,
+  describeApproval,
+  APPROVAL_MIN,
+  APPROVAL_MAX,
 } from './run'
 import { seedRun, runPsycheAgent, ruminate, editReply, DEFAULT_EDITOR_PROMPT, StageTrace } from './agent'
 import {
@@ -659,6 +662,8 @@ function snapshotRun(run: RunState) {
     demeanor: c.demeanor ?? '',
     intent: c.intent ?? '',
     move: c.move ?? '',
+    approval: c.approval ?? 0,
+    approvalLabel: describeApproval(c.approval ?? 0).label,
     canon: c.canon ?? '',
     goals: c.goals ?? [],
     sheet: c.sheet,
@@ -892,6 +897,19 @@ spindle.onFrontendMessage(async (payload: any, userId) => {
       await savePlayerProfile(char.id, String(payload.profile ?? ''))
       // Reaches the very next reply: the injection is refreshed by sendState.
       await sendState(chatId, userId, 'Player profile saved.')
+      break
+    }
+
+    case 'set_approval': {
+      const chatId = await activeChatId(payload.chatId, userId)
+      if (!chatId) break
+      const run = await loadRun(chatId)
+      const c = findChar(run, payload.characterId)
+      if (c && typeof payload.value === 'number' && Number.isFinite(payload.value)) {
+        c.approval = Math.max(APPROVAL_MIN, Math.min(APPROVAL_MAX, Math.round(payload.value)))
+        await saveRun(run)
+      }
+      await sendState(chatId, userId)
       break
     }
 

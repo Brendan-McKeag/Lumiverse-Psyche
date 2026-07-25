@@ -2,7 +2,16 @@ declare const spindle: import('lumiverse-spindle-types').SpindleAPI
 type LlmMessage = import('lumiverse-spindle-types').LlmMessageDTO
 
 import { TOOL_SCHEMAS, executeTool } from './tools'
-import { RunState, CharacterState, newCharacter, backfillEmotions, groundedReadout, overrideDirective } from './run'
+import {
+  RunState,
+  CharacterState,
+  newCharacter,
+  backfillEmotions,
+  groundedReadout,
+  overrideDirective,
+  approvalLine,
+  describeApproval,
+} from './run'
 import {
   EMOTIONS,
   EMOTION_BY_KEY,
@@ -309,6 +318,11 @@ function updateSystemPrompt(directive: string): string {
     '    investment deepens. When their goals are stalled or trampled, register that',
     '    too (frustration, boredom, withdrawal). Goal-relevant beats are among the',
     '    strongest stimuli there are.',
+    '  • Track APPROVAL (adjust_approval): the character\'s durable opinion of the',
+    '    player — gained when the player\'s actions align with the character\'s',
+    '    genuine wishes and values, lost when they cut against them. Small honest',
+    '    increments (±1-3 typical); it is a ledger built over many turns, not a',
+    '    mood, and unlike feelings it never decays.',
     '',
     'CANON IS LAW. Once a fact is in a character\'s canon it is FIXED truth: never',
     'contradict or quietly retcon it — only extend it, or rarely refine wording without',
@@ -347,6 +361,7 @@ function stateSnapshot(run: RunState): string {
       return [
         `### ${c.id} — ${c.name} [${c.isPrimary ? 'primary' : 'supporting'}, ${c.present ? 'present' : 'off-scene'}]`,
         c.persona ? `persona: ${c.persona}` : 'persona: (none)',
+        `approval of the player: ${c.approval ?? 0} (${describeApproval(c.approval ?? 0).label})`,
         `feelings: ${emotionSummary(c)}`,
         `sheet sections: ${sheetKeys.length ? sheetKeys.join(', ') : '(none)'}`,
       ].join('\n')
@@ -495,6 +510,13 @@ function ruminateSystemPrompt(): string {
     'or pull away. Never let them mirror the player\'s agenda at the expense of their',
     'own.',
     '',
+    'APPROVAL — each character\'s accumulated, durable opinion of the player — gates',
+    'trust and willingness. High-approval characters extend latitude: they take the',
+    'player at their word and comply even against their own preferences. Low-approval',
+    'characters test, verify, refuse, resist. Play the accumulated level, not the',
+    'moment\'s mood: a devoted character stays loyal through a bad evening, and a',
+    'hostile one is not won over by one nice gesture.',
+    '',
     'When a PLAYER PROFILE is provided, you also know what the PLAYER is here for.',
     'When choosing each character\'s move, prefer moves that advance the character\'s',
     'own goals ALONG a line the player\'s interests would enjoy — that intersection is',
@@ -551,6 +573,7 @@ export async function ruminate(
         c.persona ? `persona: ${c.persona}` : '',
         (c.goals ?? []).length ? `goals: ${(c.goals ?? []).join('; ')}` : '',
         (c.canon ?? '').trim() ? `canon (fixed facts):\n${(c.canon ?? '').trim()}` : '',
+        approvalLine(c),
         overrideDirective(c), // a maxed feeling must dominate the deliberation
         groundedReadout(c),
       ]

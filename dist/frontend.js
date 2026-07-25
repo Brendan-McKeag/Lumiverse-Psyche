@@ -79,6 +79,14 @@ function setup(ctx) {
         <textarea class="ps-ta ps-persona" placeholder="The character's private driver."></textarea>
         <div class="ps-row"><button class="ps-btn ps-save-persona">Save persona</button></div>
 
+        <h4 class="ps-h">Approval <span class="ps-muted">— their opinion of you (−10000…+10000, never decays)</span></h4>
+        <div class="ps-emo">
+          <span class="nm ps-appr-label"></span>
+          <div class="ps-track"><div class="ps-mid"></div><div class="ps-fill ps-appr-fill"></div></div>
+          <input class="ps-eval ps-appr-val" type="number" min="-10000" max="10000" step="1" />
+          <span class="ps-val ps-appr-band"></span>
+        </div>
+
         <h4 class="ps-h">Affect</h4>
         <div class="ps-emos"></div>
 
@@ -161,6 +169,10 @@ function setup(ctx) {
   const goalsEl = q(".ps-goals");
   const canonEl = q(".ps-canon");
   const emosEl = q(".ps-emos");
+  const apprLabelEl = q(".ps-appr-label");
+  const apprFillEl = q(".ps-appr-fill");
+  const apprValEl = q(".ps-appr-val");
+  const apprBandEl = q(".ps-appr-band");
   const sheetEl = q(".ps-sheetlist");
   const newSecEl = q(".ps-newsec");
   const seedEl = q(".ps-seed");
@@ -273,6 +285,17 @@ function setup(ctx) {
       moveEl.style.display = "none";
     }
     presentEl.checked = c.present;
+    const appr = c.approval ?? 0;
+    apprLabelEl.textContent = "approval";
+    const half = Math.min(50, Math.abs(appr) / 1000 * 50);
+    const left = appr < 0 ? 50 - half : 50;
+    apprFillEl.className = `ps-fill ps-appr-fill ${appr < 0 ? "neg" : ""}`;
+    apprFillEl.style.left = `${left}%`;
+    apprFillEl.style.width = `${half}%`;
+    apprValEl.value = String(Math.round(appr));
+    apprValEl.title = `exact value ${Math.round(appr)}; bar saturates at ±1000, full scale ±10000`;
+    apprBandEl.textContent = c.approvalLabel ?? "";
+    apprBandEl.title = c.approvalLabel ?? "";
     personaEl.value = c.persona;
     goalsEl.value = (c.goals ?? []).join(`
 `);
@@ -395,6 +418,12 @@ ${t.response}`;
     const c = selected();
     if (c)
       ctx.sendToBackend({ type: "set_present", characterId: c.id, present: presentEl.checked });
+  });
+  apprValEl.addEventListener("change", () => {
+    const c = selected();
+    const v = Number(apprValEl.value);
+    if (c && Number.isFinite(v))
+      ctx.sendToBackend({ type: "set_approval", characterId: c.id, value: v });
   });
   q(".ps-save-persona").addEventListener("click", () => {
     const c = selected();

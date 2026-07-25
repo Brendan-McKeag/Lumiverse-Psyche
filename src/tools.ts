@@ -7,7 +7,16 @@ import {
   applyStimulus,
   describeValue,
 } from './affect'
-import { CharacterState, RunState, newCharacter, slugify, backfillEmotions } from './run'
+import {
+  CharacterState,
+  RunState,
+  newCharacter,
+  slugify,
+  backfillEmotions,
+  describeApproval,
+  APPROVAL_MIN,
+  APPROVAL_MAX,
+} from './run'
 
 /* ------------------------------------------------------------------ *
  * Psyche — agent tools
@@ -160,6 +169,21 @@ export const TOOL_SCHEMAS: ToolSchema[] = [
     },
   },
   {
+    name: 'adjust_approval',
+    description:
+      "Adjust the character's APPROVAL of the PLAYER — their accumulated, durable opinion, RPG-style (-10000..+10000, never decays). Move it when the player's words or actions align with, or cut against, the character's GENUINE wishes — their persona, goals, values, and canon, not their stated demands. Signed integer delta, hard-capped at ±10 per call: ±1-3 a minor beat, ±4-7 a significant one, ±8-10 a major betrayal or sacrifice. Most turns warrant 0 or ±1-3 for at most one or two characters; do not adjust by reflex every turn. This is a ledger built over many turns, not a mood.",
+    parameters: {
+      type: 'object',
+      properties: {
+        character_id: { type: 'string' },
+        delta: { type: 'number', description: 'Signed integer, clamped to -10..+10.' },
+        reason: { type: 'string', description: 'Brief why, for the log/panel.' },
+      },
+      required: ['character_id', 'delta'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'update_canon',
     description:
       'Add to (or rewrite) the character BIBLE — the freeform store of established STATIC facts the light card deliberately leaves blank: history, upbringing, tastes, skills, body specifics, relationships, beliefs, quirks, speech habits. PROACTIVELY INVENT concrete, specific facts to make this character fully their own person; a vague character is a failure. Once you write a fact here, treat it as FIXED canon and never contradict it later — only extend it. mode "append" (default) adds newly-established facts; "replace" reorganizes/condenses the whole bible without discarding established truth.',
@@ -277,6 +301,7 @@ export async function executeTool(
         `identity: ${c.identity || '(none yet)'}`,
         `persona: ${c.persona || '(none yet)'}`,
         `goals: ${(c.goals ?? []).length ? (c.goals ?? []).join('; ') : '(none yet)'}`,
+        `approval of the player: ${c.approval ?? 0} (${describeApproval(c.approval ?? 0).label})`,
         `canon (FIXED facts — preserve, only extend):\n${(c.canon ?? '').trim() || '  (none yet — flesh this out)'}`,
         `sheet:\n${sheet || '  (empty)'}`,
         `affect:\n${feelings}`,
@@ -389,6 +414,20 @@ export async function executeTool(
         return `${c.id} sheet section [${section}] removed.`
       }
       return `No sheet section [${section}] on ${c.id}.`
+    }
+
+    case 'adjust_approval': {
+      const c = find(run, str(args, 'character_id'))
+      if (!c) return `No character "${str(args, 'character_id')}".`
+      const delta = num(args, 'delta')
+      if (delta === null) return 'adjust_approval requires a numeric delta.'
+      backfillEmotions(c) // also backfills approval on pre-approval runs
+      const d = Math.max(-10, Math.min(10, Math.round(delta)))
+      const before = c.approval ?? 0
+      const after = Math.max(APPROVAL_MIN, Math.min(APPROVAL_MAX, before + d))
+      c.approval = after
+      c.updatedAt = Date.now()
+      return `${c.id} approval: ${before} -> ${after} (${describeApproval(after).label}).`
     }
 
     case 'update_canon': {

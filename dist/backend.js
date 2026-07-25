@@ -212,6 +212,7 @@ function newCharacter(id, name, isPrimary) {
     persona: "",
     present: isPrimary,
     emotions: neutralVector(),
+    approval: 0,
     sheet: {},
     canon: "",
     goals: [],
@@ -223,6 +224,7 @@ function backfillEmotions(c) {
   for (const k of Object.keys(nv))
     if (!c.emotions[k])
       c.emotions[k] = nv[k];
+  c.approval ??= 0;
 }
 function slugify(name) {
   const base = name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
@@ -288,6 +290,73 @@ function groundedReadout(c) {
     lines.push("  (emotionally quiet, even-keeled)");
   return lines.join(`
 `);
+}
+var APPROVAL_MIN = -1e4;
+var APPROVAL_MAX = 1e4;
+var APPROVAL_BANDS = [
+  {
+    at: 1e4,
+    pos: { label: "unshakeable bond", meaning: "absolute; nothing the player could do would break it \u2014 their lives are entwined" },
+    neg: { label: "implacable enemy", meaning: "absolute; nothing could mend it \u2014 destroying the player is a purpose in itself" }
+  },
+  {
+    at: 8000,
+    pos: { label: "inseparable", meaning: "near-absolute; only a fundamental betrayal could shake it, and they would not believe it at first" },
+    neg: { label: "irreconcilable", meaning: "near-absolute enmity; only an extraordinary act could crack it, and they would distrust it as a trick" }
+  },
+  {
+    at: 5500,
+    pos: { label: "lifelong", meaning: "identity-level attachment; they would uproot their life for the player without being asked" },
+    neg: { label: "sworn against", meaning: "a dedicated enemy; opposes the player at real personal cost, and plans ahead to do it" }
+  },
+  {
+    at: 3500,
+    pos: { label: "bound", meaning: "the player is family, inner circle; loyalty survives serious tests and public cost" },
+    neg: { label: "embittered", meaning: "hatred woven into who they are; sabotages on sight, poisons others against the player" }
+  },
+  {
+    at: 2000,
+    pos: { label: "profoundly loyal", meaning: "stakes their own safety and standing on the player as a matter of course" },
+    neg: { label: "vengeful", meaning: "actively seeks to harm or thwart the player, not just refuse them" }
+  },
+  {
+    at: 1000,
+    pos: { label: "devoted", meaning: "their default is yes, even at real cost to themselves \u2014 a betrayal here would be shattering" },
+    neg: { label: "hostile", meaning: "their default is no; only self-interest or coercion moves them to cooperate" }
+  },
+  {
+    at: 400,
+    pos: { label: "deeply trusted", meaning: "extends serious latitude \u2014 takes risks on the player's word alone" },
+    neg: { label: "resented", meaning: "actively resists, tests, or undermines; any cooperation is strictly transactional" }
+  },
+  {
+    at: 150,
+    pos: { label: "trusted", meaning: "will go along with requests that cut against their own preferences, within reason" },
+    neg: { label: "disliked", meaning: "needs convincing even for reasonable asks; pushes back readily" }
+  },
+  {
+    at: 50,
+    pos: { label: "warm", meaning: "openly at ease; shares more, volunteers help" },
+    neg: { label: "distrustful", meaning: "guarded; verifies claims, keeps things back" }
+  },
+  {
+    at: 10,
+    pos: { label: "mildly favorable", meaning: "a small benefit of the doubt, granted" },
+    neg: { label: "mildly wary", meaning: "a small benefit of the doubt, withheld" }
+  }
+];
+function describeApproval(a) {
+  const v2 = Math.max(APPROVAL_MIN, Math.min(APPROVAL_MAX, a));
+  for (const band of APPROVAL_BANDS) {
+    if (Math.abs(v2) >= band.at)
+      return v2 > 0 ? band.pos : band.neg;
+  }
+  return { label: "neutral", meaning: "no formed opinion; trust and patience are at their defaults" };
+}
+function approvalLine(c) {
+  const a = c.approval ?? 0;
+  const d = describeApproval(a);
+  return `approval of the player: ${d.label} (${Math.round(a)}) \u2014 ${d.meaning}`;
 }
 function investmentRegister(c) {
   const spark = Math.max(v(c, "joy"), v(c, "excitement"), v(c, "curiosity"), v(c, "attraction"));
@@ -379,6 +448,7 @@ function characterBlock(c, humanTexture = true) {
   lines.push("");
   lines.push("Underneath (embody \u2014 do not narrate or name any of this):");
   lines.push(groundedReadout(c));
+  lines.push(`  ${approvalLine(c)}`);
   lines.push(`  investment in the scene: ${investmentRegister(c)}`);
   if (humanTexture)
     for (const d of deliveryRegister(c))
@@ -430,6 +500,10 @@ function buildDirective(run, opts = {}) {
     "    own \u2014 a plan, an invitation, a complication, a confession, a callback to",
     "    earlier events \u2014 drawn from their goals and canon. They don't wait to be",
     "    prompted; the scene is theirs to move as much as the player's.",
+    "  \u2022 APPROVAL is each character's accumulated opinion of the player. High",
+    "    approval buys trust and willingness \u2014 they'll go along even when it cuts",
+    "    against their own wishes. Low approval means guardedness, pushback,",
+    "    refusal. It moves slowly; act the current level, don't leap ahead of it.",
     "",
     "EMBODIMENT: act their state through behavior \u2014 posture, tone, word choice, what",
     "they reach for and hold back; let stronger feelings break composure and",
@@ -643,6 +717,20 @@ var TOOL_SCHEMAS = [
     }
   },
   {
+    name: "adjust_approval",
+    description: "Adjust the character's APPROVAL of the PLAYER \u2014 their accumulated, durable opinion, RPG-style (-10000..+10000, never decays). Move it when the player's words or actions align with, or cut against, the character's GENUINE wishes \u2014 their persona, goals, values, and canon, not their stated demands. Signed integer delta, hard-capped at \xB110 per call: \xB11-3 a minor beat, \xB14-7 a significant one, \xB18-10 a major betrayal or sacrifice. Most turns warrant 0 or \xB11-3 for at most one or two characters; do not adjust by reflex every turn. This is a ledger built over many turns, not a mood.",
+    parameters: {
+      type: "object",
+      properties: {
+        character_id: { type: "string" },
+        delta: { type: "number", description: "Signed integer, clamped to -10..+10." },
+        reason: { type: "string", description: "Brief why, for the log/panel." }
+      },
+      required: ["character_id", "delta"],
+      additionalProperties: false
+    }
+  },
+  {
     name: "update_canon",
     description: 'Add to (or rewrite) the character BIBLE \u2014 the freeform store of established STATIC facts the light card deliberately leaves blank: history, upbringing, tastes, skills, body specifics, relationships, beliefs, quirks, speech habits. PROACTIVELY INVENT concrete, specific facts to make this character fully their own person; a vague character is a failure. Once you write a fact here, treat it as FIXED canon and never contradict it later \u2014 only extend it. mode "append" (default) adds newly-established facts; "replace" reorganizes/condenses the whole bible without discarding established truth.',
     parameters: {
@@ -743,6 +831,7 @@ async function executeTool(run, name, args) {
         `identity: ${c.identity || "(none yet)"}`,
         `persona: ${c.persona || "(none yet)"}`,
         `goals: ${(c.goals ?? []).length ? (c.goals ?? []).join("; ") : "(none yet)"}`,
+        `approval of the player: ${c.approval ?? 0} (${describeApproval(c.approval ?? 0).label})`,
         `canon (FIXED facts \u2014 preserve, only extend):
 ${(c.canon ?? "").trim() || "  (none yet \u2014 flesh this out)"}`,
         `sheet:
@@ -872,6 +961,21 @@ ${feelings}`
         return `${c.id} sheet section [${section}] removed.`;
       }
       return `No sheet section [${section}] on ${c.id}.`;
+    }
+    case "adjust_approval": {
+      const c = find(run, str(args, "character_id"));
+      if (!c)
+        return `No character "${str(args, "character_id")}".`;
+      const delta = num(args, "delta");
+      if (delta === null)
+        return "adjust_approval requires a numeric delta.";
+      backfillEmotions(c);
+      const d = Math.max(-10, Math.min(10, Math.round(delta)));
+      const before = c.approval ?? 0;
+      const after = Math.max(APPROVAL_MIN, Math.min(APPROVAL_MAX, before + d));
+      c.approval = after;
+      c.updatedAt = Date.now();
+      return `${c.id} approval: ${before} -> ${after} (${describeApproval(after).label}).`;
     }
     case "update_canon": {
       const c = find(run, str(args, "character_id"));
@@ -1150,6 +1254,11 @@ function updateSystemPrompt(directive) {
     "    investment deepens. When their goals are stalled or trampled, register that",
     "    too (frustration, boredom, withdrawal). Goal-relevant beats are among the",
     "    strongest stimuli there are.",
+    "  \u2022 Track APPROVAL (adjust_approval): the character's durable opinion of the",
+    "    player \u2014 gained when the player's actions align with the character's",
+    "    genuine wishes and values, lost when they cut against them. Small honest",
+    "    increments (\xB11-3 typical); it is a ledger built over many turns, not a",
+    "    mood, and unlike feelings it never decays.",
     "",
     "CANON IS LAW. Once a fact is in a character's canon it is FIXED truth: never",
     "contradict or quietly retcon it \u2014 only extend it, or rarely refine wording without",
@@ -1187,6 +1296,7 @@ function stateSnapshot(run) {
     return [
       `### ${c.id} \u2014 ${c.name} [${c.isPrimary ? "primary" : "supporting"}, ${c.present ? "present" : "off-scene"}]`,
       c.persona ? `persona: ${c.persona}` : "persona: (none)",
+      `approval of the player: ${c.approval ?? 0} (${describeApproval(c.approval ?? 0).label})`,
       `feelings: ${emotionSummary(c)}`,
       `sheet sections: ${sheetKeys.length ? sheetKeys.join(", ") : "(none)"}`
     ].join(`
@@ -1304,6 +1414,13 @@ function ruminateSystemPrompt() {
     "or pull away. Never let them mirror the player's agenda at the expense of their",
     "own.",
     "",
+    "APPROVAL \u2014 each character's accumulated, durable opinion of the player \u2014 gates",
+    "trust and willingness. High-approval characters extend latitude: they take the",
+    "player at their word and comply even against their own preferences. Low-approval",
+    "characters test, verify, refuse, resist. Play the accumulated level, not the",
+    "moment's mood: a devoted character stays loyal through a bad evening, and a",
+    "hostile one is not won over by one nice gesture.",
+    "",
     "When a PLAYER PROFILE is provided, you also know what the PLAYER is here for.",
     "When choosing each character's move, prefer moves that advance the character's",
     "own goals ALONG a line the player's interests would enjoy \u2014 that intersection is",
@@ -1343,6 +1460,7 @@ async function ruminate(run, recentScene, opts) {
     (c.goals ?? []).length ? `goals: ${(c.goals ?? []).join("; ")}` : "",
     (c.canon ?? "").trim() ? `canon (fixed facts):
 ${(c.canon ?? "").trim()}` : "",
+    approvalLine(c),
     overrideDirective(c),
     groundedReadout(c)
   ].filter(Boolean).join(`
@@ -1984,6 +2102,8 @@ function snapshotRun(run) {
     demeanor: c.demeanor ?? "",
     intent: c.intent ?? "",
     move: c.move ?? "",
+    approval: c.approval ?? 0,
+    approvalLabel: describeApproval(c.approval ?? 0).label,
     canon: c.canon ?? "",
     goals: c.goals ?? [],
     sheet: c.sheet,
@@ -2178,6 +2298,19 @@ spindle.onFrontendMessage(async (payload, userId) => {
           break;
         await savePlayerProfile(char.id, String(payload.profile ?? ""));
         await sendState(chatId, userId, "Player profile saved.");
+        break;
+      }
+      case "set_approval": {
+        const chatId = await activeChatId(payload.chatId, userId);
+        if (!chatId)
+          break;
+        const run = await loadRun(chatId);
+        const c = findChar(run, payload.characterId);
+        if (c && typeof payload.value === "number" && Number.isFinite(payload.value)) {
+          c.approval = Math.max(APPROVAL_MIN, Math.min(APPROVAL_MAX, Math.round(payload.value)));
+          await saveRun(run);
+        }
+        await sendState(chatId, userId);
         break;
       }
       case "save_persona": {
