@@ -442,8 +442,12 @@ function characterBlock(c, humanTexture = true) {
   if (override)
     lines.push(override);
   const strongOverride = topOverrideTier(c) === "overwhelming" || topOverrideTier(c) === "all-consuming";
-  if (!strongOverride && c.demeanor && c.demeanor.trim())
-    lines.push(c.demeanor.trim());
+  if (!strongOverride) {
+    if (c.demeanor && c.demeanor.trim())
+      lines.push(c.demeanor.trim());
+    if (c.resistance && c.resistance.trim())
+      lines.push(`Holding the line: ${c.resistance.trim()}`);
+  }
   lines.push("");
   lines.push("Underneath (embody \u2014 do not narrate or name any of this):");
   lines.push(groundedReadout(c));
@@ -486,6 +490,12 @@ function buildDirective(run, opts = {}) {
     "take initiative, start things, change the subject, make demands, set conditions,",
     "and push back, stall, or refuse when the player's lead cuts against their aims.",
     "They move the scene as much as the player does, toward their own desires.",
+    "  \u2022 DEFAULT TO FRICTION, NOT COMPLIANCE. When the player steers toward an outcome,",
+    "    do not assume the character follows just because it keeps the scene moving.",
+    "    Check whether it serves THEIR agenda; if it doesn't, they pull back toward",
+    "    what they actually want, even if that stalls the player's plan or creates a",
+    "    standoff. A story where the character's own agenda never wins is a yes-man",
+    "    story wearing a character sheet.",
     "",
     "INVESTMENT: these characters are partners in the story, not service providers.",
     "  \u2022 When the player's actions serve a character's goals and desires, it LANDS:",
@@ -495,6 +505,11 @@ function buildDirective(run, opts = {}) {
     "  \u2022 Enjoyment is earned, never faked. A character whose goals are ignored or",
     "    thwarted doesn't perform enthusiasm \u2014 they push their own agenda harder,",
     "    negotiate, or disengage.",
+    "  \u2022 WARMTH IS NOT FREE. A character does not grow fonder, more agreeable, or more",
+    "    open just because the scene is heading somewhere pleasant or the player is",
+    "    being nice \u2014 that has to be earned turn by turn, same as approval. When",
+    "    unsure whether it's earned yet, withhold it; a character who warms to",
+    "    everything immediately reads as false, not likeable.",
     "  \u2022 DRIVE THE STORY: each character regularly contributes new material of their",
     "    own \u2014 a plan, an invitation, a complication, a confession, a callback to",
     "    earlier events \u2014 drawn from their goals and canon. They don't wait to be",
@@ -503,6 +518,11 @@ function buildDirective(run, opts = {}) {
     "    approval buys trust and willingness \u2014 they'll go along even when it cuts",
     "    against their own wishes. Low approval means guardedness, pushback,",
     "    refusal. It moves slowly; act the current level, don't leap ahead of it.",
+    "",
+    'Each character below may carry a "Holding the line" note \u2014 what they are NOT',
+    "giving away this turn (warmth, agreement, ground in the scene) and why. Honor it",
+    "as a boundary: it says what they withhold, not how the scene plays out \u2014 find",
+    "your own way to make it true on the page.",
     "",
     "EMBODIMENT: act their state through behavior \u2014 posture, tone, word choice, what",
     "they reach for and hold back; let stronger feelings break composure and",
@@ -1420,30 +1440,53 @@ function ruminateSystemPrompt() {
     "moment's mood: a devoted character stays loyal through a bad evening, and a",
     "hostile one is not won over by one nice gesture.",
     "",
+    "MANDATORY CONFLICT CHECK \u2014 do this before writing anything else. Ask: is the",
+    "player, this turn, asking for or steering the scene toward something that cuts",
+    "against this character's genuine wishes \u2014 their goals, persona, or canon? Or",
+    "asking for warmth, agreement, trust, or control of where the scene goes that",
+    "their CURRENT approval and investment have not actually earned yet? Bias toward",
+    "finding real friction: compliance and warmth handed over for free, because it is",
+    "convenient for the scene, is the exact failure this check exists to catch. A",
+    "character does not warm up, agree, or let the player's lead carry the scene",
+    "just because the moment is pleasant or the player is being nice \u2014 every inch of",
+    "that has to be earned, same as approval. When the player steers toward an",
+    "outcome, do not assume the character follows: if it doesn't serve their own",
+    "agenda, they pull back toward what THEY want, even if that stalls the player's",
+    "plan or creates a standoff. Only when a request genuinely aligns with the",
+    "character's own wishes, AND their approval justifies it, does full warmth or",
+    "compliance belong \u2014 and even then it should read as a choice they're making, not",
+    "a default they fell into.",
+    "",
     "When a PLAYER PROFILE is provided, you also know what the PLAYER is here for.",
     "Bias each character's underlying pull toward their own goals ALONG a line the",
     "player's interests would enjoy when the two can genuinely align \u2014 but do not",
     "force it, and never have a character abandon their own agenda or nature to",
     "service the profile, or acknowledge it in-fiction.",
     "",
-    "Output ONE field per character:",
-    "  directive \u2014 3-5 sentences of concrete behavioral direction for the prose writer:",
-    "    manner, tone, what they lean toward or away from, what they resist or withhold,",
-    "    how the feelings reshape their voice away from baseline. Include the ENERGY of",
-    "    their delivery: how much they say, how much effort it carries, whether they",
-    "    engage or withdraw. Write actions and bearing, not feelings; no emotion labels,",
-    "    no numbers.",
+    "Output TWO fields per character:",
+    "  resistance \u2014 1-2 sentences, the direct output of the conflict check: what this",
+    "    character is NOT giving away this turn \u2014 warmth, agreement, ground in the",
+    "    scene, compliance \u2014 and why, tied to their goals/canon/approval. If (rarely)",
+    "    the check finds genuine alignment AND earned approval, say so plainly and",
+    `    say why it's earned, e.g. "aligned \u2014 this actually serves what they want, and`,
+    '    the trust is there." Never leave this blank or generic.',
+    "  directive \u2014 3-5 sentences of concrete behavioral direction for the prose writer,",
+    "    consistent with the resistance above: manner, tone, what they lean toward or",
+    "    away from, what they resist or withhold, how the feelings reshape their voice",
+    "    away from baseline. Include the ENERGY of their delivery: how much they say,",
+    "    how much effort it carries, whether they engage or withdraw. Write actions and",
+    "    bearing, not feelings; no emotion labels, no numbers.",
     "  Deliberately do NOT hand the writer a specific planned action, plot beat, or line",
     "  of dialogue to execute \u2014 that pre-scripts the scene and flattens what should stay",
-    "  improvised. Describe the character's state and pull; let the writer discover what",
-    "  they actually do and say.",
+    "  improvised. Describe the character's state, pull, and boundary; let the writer",
+    "  discover what they actually do and say to hold it.",
     "",
     "Honor an OVERRIDING STATE at full force: if a feeling is all-consuming the character",
     "is run by it and breaks from their usual self \u2014 do NOT moderate it back toward their",
     "persona or composure. Canon facts stay fixed truth. Do not write dialogue or narrate",
     "events that have not happened yet.",
     "",
-    'Return ONLY JSON: { "<id>": { "directive": "<...>" }, ... }'
+    'Return ONLY JSON: { "<id>": { "resistance": "<...>", "directive": "<...>" }, ... }'
   ].join(`
 `);
 }
@@ -1482,7 +1525,8 @@ ${(c.canon ?? "").trim()}` : "",
         "Characters (persona, canon, goals, current emotional state):",
         blocks,
         "",
-        "Ruminate, then write each one's directive. Return only the JSON."
+        "Ruminate \u2014 run the conflict check first \u2014 then write each one's resistance +",
+        "directive. Return only the JSON."
       ].filter(Boolean).join(`
 `)
     }
@@ -1517,6 +1561,7 @@ ${(c.canon ?? "").trim()}` : "",
     const directive = typeof o.directive === "string" ? o.directive : typeof o.demeanor === "string" ? o.demeanor : "";
     if (directive.trim())
       c.demeanor = directive.trim();
+    c.resistance = typeof o.resistance === "string" && o.resistance.trim() ? o.resistance.trim() : undefined;
   }
 }
 var DEFAULT_EDITOR_PROMPT = [
@@ -2093,6 +2138,7 @@ function snapshotRun(run) {
     identity: c.identity,
     persona: c.persona,
     demeanor: c.demeanor ?? "",
+    resistance: c.resistance ?? "",
     approval: c.approval ?? 0,
     approvalLabel: describeApproval(c.approval ?? 0).label,
     canon: c.canon ?? "",

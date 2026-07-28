@@ -517,30 +517,53 @@ function ruminateSystemPrompt(): string {
     'moment\'s mood: a devoted character stays loyal through a bad evening, and a',
     'hostile one is not won over by one nice gesture.',
     '',
+    'MANDATORY CONFLICT CHECK — do this before writing anything else. Ask: is the',
+    'player, this turn, asking for or steering the scene toward something that cuts',
+    'against this character\'s genuine wishes — their goals, persona, or canon? Or',
+    'asking for warmth, agreement, trust, or control of where the scene goes that',
+    'their CURRENT approval and investment have not actually earned yet? Bias toward',
+    'finding real friction: compliance and warmth handed over for free, because it is',
+    'convenient for the scene, is the exact failure this check exists to catch. A',
+    'character does not warm up, agree, or let the player\'s lead carry the scene',
+    'just because the moment is pleasant or the player is being nice — every inch of',
+    'that has to be earned, same as approval. When the player steers toward an',
+    'outcome, do not assume the character follows: if it doesn\'t serve their own',
+    'agenda, they pull back toward what THEY want, even if that stalls the player\'s',
+    'plan or creates a standoff. Only when a request genuinely aligns with the',
+    'character\'s own wishes, AND their approval justifies it, does full warmth or',
+    'compliance belong — and even then it should read as a choice they\'re making, not',
+    'a default they fell into.',
+    '',
     'When a PLAYER PROFILE is provided, you also know what the PLAYER is here for.',
     'Bias each character\'s underlying pull toward their own goals ALONG a line the',
     'player\'s interests would enjoy when the two can genuinely align — but do not',
     'force it, and never have a character abandon their own agenda or nature to',
     'service the profile, or acknowledge it in-fiction.',
     '',
-    'Output ONE field per character:',
-    '  directive — 3-5 sentences of concrete behavioral direction for the prose writer:',
-    '    manner, tone, what they lean toward or away from, what they resist or withhold,',
-    '    how the feelings reshape their voice away from baseline. Include the ENERGY of',
-    '    their delivery: how much they say, how much effort it carries, whether they',
-    '    engage or withdraw. Write actions and bearing, not feelings; no emotion labels,',
-    '    no numbers.',
+    'Output TWO fields per character:',
+    '  resistance — 1-2 sentences, the direct output of the conflict check: what this',
+    '    character is NOT giving away this turn — warmth, agreement, ground in the',
+    '    scene, compliance — and why, tied to their goals/canon/approval. If (rarely)',
+    '    the check finds genuine alignment AND earned approval, say so plainly and',
+    '    say why it\'s earned, e.g. "aligned — this actually serves what they want, and',
+    '    the trust is there." Never leave this blank or generic.',
+    '  directive — 3-5 sentences of concrete behavioral direction for the prose writer,',
+    '    consistent with the resistance above: manner, tone, what they lean toward or',
+    '    away from, what they resist or withhold, how the feelings reshape their voice',
+    '    away from baseline. Include the ENERGY of their delivery: how much they say,',
+    '    how much effort it carries, whether they engage or withdraw. Write actions and',
+    '    bearing, not feelings; no emotion labels, no numbers.',
     '  Deliberately do NOT hand the writer a specific planned action, plot beat, or line',
     '  of dialogue to execute — that pre-scripts the scene and flattens what should stay',
-    '  improvised. Describe the character\'s state and pull; let the writer discover what',
-    '  they actually do and say.',
+    '  improvised. Describe the character\'s state, pull, and boundary; let the writer',
+    '  discover what they actually do and say to hold it.',
     '',
     'Honor an OVERRIDING STATE at full force: if a feeling is all-consuming the character',
     'is run by it and breaks from their usual self — do NOT moderate it back toward their',
     'persona or composure. Canon facts stay fixed truth. Do not write dialogue or narrate',
     'events that have not happened yet.',
     '',
-    'Return ONLY JSON: { "<id>": { "directive": "<...>" }, ... }',
+    'Return ONLY JSON: { "<id>": { "resistance": "<...>", "directive": "<...>" }, ... }',
   ].join('\n')
 }
 
@@ -550,6 +573,13 @@ function ruminateSystemPrompt(): string {
  * behavioral directive (-> demeanor) that the prose writer will follow. Mood and
  * pull only — deliberately no pre-planned action or line, so the prose writer
  * still has room to improvise rather than execute a scripted beat.
+ *
+ * Also runs a MANDATORY conflict check each turn (-> resistance): forces the
+ * model to name what the character is NOT giving away this turn — warmth,
+ * agreement, ground in the scene — rather than trusting it to remember generic
+ * "don't be a yes-man" guidance under context pressure. This is a boundary, not
+ * a script: it says what the character withholds, never the specific line or
+ * action they use to withhold it, so the prose still has to find its own way.
  */
 export async function ruminate(
   run: RunState,
@@ -600,7 +630,8 @@ export async function ruminate(
         'Characters (persona, canon, goals, current emotional state):',
         blocks,
         '',
-        'Ruminate, then write each one\'s directive. Return only the JSON.',
+        'Ruminate — run the conflict check first — then write each one\'s resistance +',
+        'directive. Return only the JSON.',
       ]
         .filter(Boolean)
         .join('\n'),
@@ -635,9 +666,11 @@ export async function ruminate(
       if (entry.trim()) c.demeanor = entry.trim()
       continue
     }
-    const o = entry as { directive?: unknown; demeanor?: unknown }
+    const o = entry as { directive?: unknown; demeanor?: unknown; resistance?: unknown }
     const directive = typeof o.directive === 'string' ? o.directive : typeof o.demeanor === 'string' ? o.demeanor : ''
     if (directive.trim()) c.demeanor = directive.trim()
+    // resistance is refreshed every rumination — a stale boundary must not linger
+    c.resistance = typeof o.resistance === 'string' && o.resistance.trim() ? o.resistance.trim() : undefined
   }
 }
 

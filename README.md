@@ -48,6 +48,14 @@ description and a one-line summary. Everything else is rolled per run.
   pre-planned "next action" is handed to the writer — mood, goals, and canon
   steer it; the specific move stays improvised, not scripted in advance.
 
+- **A mandatory conflict check, every turn.** Before writing, rumination is
+  forced to name what each present character is **holding the line on** —
+  warmth, agreement, or ground in the scene they are NOT giving away this
+  turn, and why, tied to their goals/canon/approval. Generic "don't be a
+  yes-man" guidance is easy for a model to drop under context pressure; a
+  required per-turn field isn't. It's a boundary, not a script — it says what
+  the character withholds, never the line or action they use to withhold it.
+
 - **An invested partner, not a service provider.** A live **investment
   register** derived from the affect vector tells the writer how much the
   character is enjoying the scene: when the player serves their goals they

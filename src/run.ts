@@ -69,6 +69,14 @@ export interface CharacterState {
    * always recomputed live so manual value edits still bite immediately.
    */
   demeanor?: string
+  /**
+   * Present-tense "boundary brief": the output of rumination's mandatory conflict
+   * check — what this character is NOT giving away this turn (warmth, agreement,
+   * ground in the scene, compliance) and why, given their goals/canon/approval.
+   * The direct counter to yes-man drift: compliance and warmth must be re-earned
+   * every turn, never assumed. Refreshed each rumination like demeanor.
+   */
+  resistance?: string
   updatedAt: number
 }
 
@@ -437,13 +445,18 @@ function characterBlock(c: CharacterState, humanTexture = true): string {
   const override = overrideDirective(c)
   if (override) lines.push(override) // highest priority — placed first, before anything moderating
 
-  // A stored demeanor describes a calmer past moment; when a strong override is
-  // active (e.g. a hand-set extreme) that brief would only moderate it, so drop it.
+  // A stored demeanor/resistance describes a calmer past moment; when a strong
+  // override is active (e.g. a hand-set extreme) it already supersedes ordinary
+  // boundary-holding, so drop both rather than let them fight the override.
   // Deliberately NOT prescribing a specific "wants/likely to" or "next move" line
   // here — pre-planning a concrete action ahead of the prose boxes the writer in
-  // instead of letting it emerge; mood, goals, and canon are steer enough.
+  // instead of letting it emerge; mood, goals, canon, and the boundary below are
+  // steer enough.
   const strongOverride = topOverrideTier(c) === 'overwhelming' || topOverrideTier(c) === 'all-consuming'
-  if (!strongOverride && c.demeanor && c.demeanor.trim()) lines.push(c.demeanor.trim())
+  if (!strongOverride) {
+    if (c.demeanor && c.demeanor.trim()) lines.push(c.demeanor.trim())
+    if (c.resistance && c.resistance.trim()) lines.push(`Holding the line: ${c.resistance.trim()}`)
+  }
 
   lines.push('')
   lines.push('Underneath (embody — do not narrate or name any of this):')
@@ -498,6 +511,12 @@ export function buildDirective(run: RunState, opts: DirectiveOpts = {}): string 
     'take initiative, start things, change the subject, make demands, set conditions,',
     'and push back, stall, or refuse when the player\'s lead cuts against their aims.',
     'They move the scene as much as the player does, toward their own desires.',
+    '  • DEFAULT TO FRICTION, NOT COMPLIANCE. When the player steers toward an outcome,',
+    '    do not assume the character follows just because it keeps the scene moving.',
+    '    Check whether it serves THEIR agenda; if it doesn\'t, they pull back toward',
+    '    what they actually want, even if that stalls the player\'s plan or creates a',
+    '    standoff. A story where the character\'s own agenda never wins is a yes-man',
+    '    story wearing a character sheet.',
     '',
     'INVESTMENT: these characters are partners in the story, not service providers.',
     '  • When the player\'s actions serve a character\'s goals and desires, it LANDS:',
@@ -507,6 +526,11 @@ export function buildDirective(run: RunState, opts: DirectiveOpts = {}): string 
     '  • Enjoyment is earned, never faked. A character whose goals are ignored or',
     '    thwarted doesn\'t perform enthusiasm — they push their own agenda harder,',
     '    negotiate, or disengage.',
+    '  • WARMTH IS NOT FREE. A character does not grow fonder, more agreeable, or more',
+    '    open just because the scene is heading somewhere pleasant or the player is',
+    '    being nice — that has to be earned turn by turn, same as approval. When',
+    '    unsure whether it\'s earned yet, withhold it; a character who warms to',
+    '    everything immediately reads as false, not likeable.',
     '  • DRIVE THE STORY: each character regularly contributes new material of their',
     '    own — a plan, an invitation, a complication, a confession, a callback to',
     '    earlier events — drawn from their goals and canon. They don\'t wait to be',
@@ -515,6 +539,11 @@ export function buildDirective(run: RunState, opts: DirectiveOpts = {}): string 
     '    approval buys trust and willingness — they\'ll go along even when it cuts',
     '    against their own wishes. Low approval means guardedness, pushback,',
     '    refusal. It moves slowly; act the current level, don\'t leap ahead of it.',
+    '',
+    'Each character below may carry a "Holding the line" note — what they are NOT',
+    'giving away this turn (warmth, agreement, ground in the scene) and why. Honor it',
+    'as a boundary: it says what they withhold, not how the scene plays out — find',
+    'your own way to make it true on the page.',
     '',
     'EMBODIMENT: act their state through behavior — posture, tone, word choice, what',
     'they reach for and hold back; let stronger feelings break composure and',

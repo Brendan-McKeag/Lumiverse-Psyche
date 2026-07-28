@@ -25,6 +25,7 @@ interface Character {
   identity: string
   persona: string
   demeanor: string
+  resistance: string
   approval: number
   approvalLabel: string
   canon: string
@@ -71,6 +72,7 @@ export function setup(ctx: SpindleFrontendContext) {
     .ps-sheet { display:flex; flex-direction:column; gap:4px; }
     .ps-sheet .sk { font-size:11px; font-weight:600; }
     .ps-demeanor { font-size:12px; font-style:italic; line-height:1.45; padding:8px 10px; border-left:2px solid var(--lumiverse-accent,#6c8cff); background:var(--lumiverse-fill-subtle); border-radius:var(--lumiverse-radius); }
+    .ps-resistance { font-size:12px; line-height:1.45; padding:8px 10px; border-left:2px solid #e0a23c; background:var(--lumiverse-fill-subtle); border-radius:var(--lumiverse-radius); }
     .ps-btn.sel { border-color:var(--lumiverse-accent,#6c8cff); color:var(--lumiverse-accent,#6c8cff); }
     .ps-pre { white-space:pre-wrap; word-break:break-word; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:10.5px; line-height:1.4; max-height:360px; overflow:auto; padding:8px; background:var(--lumiverse-fill-subtle); border:1px solid var(--lumiverse-border); border-radius:var(--lumiverse-radius); }
     .ps-engine { font-size:12px; font-weight:600; padding:6px 10px; border-radius:var(--lumiverse-radius); border:1px solid var(--lumiverse-border); text-align:center; }
@@ -107,6 +109,7 @@ export function setup(ctx: SpindleFrontendContext) {
         </div>
         <div class="ps-muted ps-d-identity"></div>
         <div class="ps-demeanor" style="display:none"></div>
+        <div class="ps-resistance" style="display:none"></div>
 
         <h4 class="ps-h">Goals &amp; desires (one per line)</h4>
         <textarea class="ps-ta ps-goals" placeholder="What this character is pursuing, in their own interest."></textarea>
@@ -203,6 +206,7 @@ export function setup(ctx: SpindleFrontendContext) {
   const dName = q<HTMLElement>('.ps-d-name')
   const dIdentity = q<HTMLElement>('.ps-d-identity')
   const demeanorEl = q<HTMLElement>('.ps-demeanor')
+  const resistanceEl = q<HTMLElement>('.ps-resistance')
   const playerEl = q<HTMLTextAreaElement>('.ps-player')
   const presentEl = q<HTMLInputElement>('.ps-present')
   const personaEl = q<HTMLTextAreaElement>('.ps-persona')
@@ -351,6 +355,12 @@ export function setup(ctx: SpindleFrontendContext) {
       demeanorEl.style.display = 'block'
     } else {
       demeanorEl.style.display = 'none'
+    }
+    if (c.resistance && c.resistance.trim()) {
+      resistanceEl.textContent = `Holding the line: ${c.resistance}`
+      resistanceEl.style.display = 'block'
+    } else {
+      resistanceEl.style.display = 'none'
     }
     presentEl.checked = c.present
 
