@@ -435,14 +435,14 @@ function overrideDirective(c) {
   return lines.join(`
 `);
 }
-function characterBlock(c, humanTexture = true, conflictCheck = true) {
+function characterBlock(c, humanTexture = true, conflictCheck = true, demeanorEnabled = true) {
   const lines = [];
   lines.push(`## ${c.name}${c.isPrimary ? "" : " (supporting character)"}`);
   const override = overrideDirective(c);
   if (override)
     lines.push(override);
   const strongOverride = topOverrideTier(c) === "overwhelming" || topOverrideTier(c) === "all-consuming";
-  if (!strongOverride) {
+  if (!strongOverride && demeanorEnabled) {
     if (c.demeanor && c.demeanor.trim())
       lines.push(c.demeanor.trim());
     if (conflictCheck && c.resistance && c.resistance.trim())
@@ -481,7 +481,8 @@ function buildDirective(run, opts = {}) {
   present.sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary));
   const humanTexture = opts.humanTexture !== false;
   const conflictCheck = opts.conflictCheck !== false;
-  const blocks = present.map((c) => characterBlock(c, humanTexture, conflictCheck)).join(`
+  const demeanorEnabled = opts.demeanorEnabled !== false;
+  const blocks = present.map((c) => characterBlock(c, humanTexture, conflictCheck, demeanorEnabled)).join(`
 
 `);
   return [
@@ -540,7 +541,7 @@ function buildDirective(run, opts = {}) {
       "    refusal. It moves slowly; act the current level, don't leap ahead of it."
     ],
     "",
-    ...conflictCheck ? [
+    ...conflictCheck && demeanorEnabled ? [
       'Each character below may carry a "Holding the line" note \u2014 what they are NOT',
       "giving away this turn (warmth, agreement, ground in the scene) and why. Honor it",
       "as a boundary: it says what they withhold, not how the scene plays out \u2014 find",
@@ -1717,6 +1718,7 @@ var DEFAULT_CONFIG = {
   agentConnectionId: "",
   humanTexture: true,
   conflictCheck: false,
+  demeanorEnabled: false,
   editorEnabled: false,
   editorPrompt: DEFAULT_EDITOR_PROMPT,
   editorConnectionId: "",
@@ -1956,7 +1958,8 @@ async function runAgentForChat(chatId, reply, userId) {
       directive: capText(buildDirective(run, {
         playerProfile,
         humanTexture: config.humanTexture,
-        conflictCheck: config.conflictCheck
+        conflictCheck: config.conflictCheck,
+        demeanorEnabled: config.demeanorEnabled
       }) ?? "(nothing injected \u2014 not seeded or no one present)", DBG_REQ_CAP)
     };
     try {
@@ -2147,7 +2150,8 @@ async function refreshInjection(chatId, userId) {
     const directive = run && buildDirective(run, {
       playerProfile,
       humanTexture: config.humanTexture,
-      conflictCheck: config.conflictCheck
+      conflictCheck: config.conflictCheck,
+      demeanorEnabled: config.demeanorEnabled
     }) || "(no active emotional state)";
     await spindle.world_books.entries.update(entryId, { content: directive }, userId);
     if (!loggedInject) {
@@ -2251,6 +2255,7 @@ spindle.onFrontendMessage(async (payload, userId) => {
           agentConnectionId: payload.config?.agentConnectionId === undefined ? config.agentConnectionId : String(payload.config.agentConnectionId ?? ""),
           humanTexture: Boolean(payload.config?.humanTexture ?? config.humanTexture),
           conflictCheck: Boolean(payload.config?.conflictCheck ?? config.conflictCheck),
+          demeanorEnabled: Boolean(payload.config?.demeanorEnabled ?? config.demeanorEnabled),
           editorEnabled: Boolean(payload.config?.editorEnabled ?? config.editorEnabled),
           editorPrompt: payload.config?.editorPrompt === undefined ? config.editorPrompt : String(payload.config.editorPrompt ?? ""),
           editorConnectionId: payload.config?.editorConnectionId === undefined ? config.editorConnectionId : String(payload.config.editorConnectionId ?? ""),

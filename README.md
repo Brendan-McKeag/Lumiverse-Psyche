@@ -60,6 +60,17 @@ description and a one-line summary. Everything else is rolled per run.
   some play styles find the forced field overrides organic characterization;
   leave it off to let the model judge tone and compliance on its own.
 
+- **Demeanor is a toggle too.** Every turn, rumination also writes a
+  **demeanor** — 3-5 sentences of concrete behavioral direction, "what this
+  character DOES this turn." It's the one LLM-computed, panel-uneditable
+  field shown above Goals & Desires (with "Holding the line" when the
+  conflict check is on). Injecting it is powerful but opinionated — it hands
+  the prose writer a pre-composed read of the moment, which can end up
+  outweighing the character's own sheet. **"Inject demeanor" is off by
+  default** — off, the writer gets no pre-composed intention paragraph at
+  all, just the raw affect readout, approval, investment, goals, persona,
+  and canon, and works out the character's behavior itself.
+
 - **An invested partner, not a service provider.** A live **investment
   register** derived from the affect vector tells the writer how much the
   character is enjoying the scene: when the player serves their goals they
@@ -145,7 +156,7 @@ before publishing.
 ## Settings
 
 In the **Psyche** drawer tab: enable/disable, human texture (energy-matched
-replies), engine rounds per turn, decay rate, an optional engine directive
-(tone steering), reroll seed, reset run, per-character persona/sheet/presence
-editing, the player profile for the current character card, and the editor
-(toggle, style prompt, model).
+replies), per-turn conflict check, inject demeanor, engine rounds per turn,
+decay rate, an optional engine directive (tone steering), reroll seed, reset
+run, per-character persona/sheet/presence editing, the player profile for the
+current character card, and the editor (toggle, style prompt, model).

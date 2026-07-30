@@ -438,7 +438,7 @@ export function overrideDirective(c: CharacterState): string {
   return lines.join('\n')
 }
 
-function characterBlock(c: CharacterState, humanTexture = true, conflictCheck = true): string {
+function characterBlock(c: CharacterState, humanTexture = true, conflictCheck = true, demeanorEnabled = true): string {
   const lines: string[] = []
   lines.push(`## ${c.name}${c.isPrimary ? '' : ' (supporting character)'}`)
 
@@ -453,7 +453,7 @@ function characterBlock(c: CharacterState, humanTexture = true, conflictCheck = 
   // instead of letting it emerge; mood, goals, canon, and the boundary below are
   // steer enough.
   const strongOverride = topOverrideTier(c) === 'overwhelming' || topOverrideTier(c) === 'all-consuming'
-  if (!strongOverride) {
+  if (!strongOverride && demeanorEnabled) {
     if (c.demeanor && c.demeanor.trim()) lines.push(c.demeanor.trim())
     if (conflictCheck && c.resistance && c.resistance.trim()) lines.push(`Holding the line: ${c.resistance.trim()}`)
   }
@@ -500,6 +500,17 @@ export interface DirectiveOpts {
    * backend.ts's Config and currently ships off.
    */
   conflictCheck?: boolean
+  /**
+   * The uneditable, LLM-computed narrative fields — demeanor ("how this
+   * character is acting right now", a 3-5 sentence behavioral intention) and,
+   * when conflictCheck is also on, the "Holding the line" resistance note. Both
+   * are panel-displayed but not user-editable. When off, NEITHER is injected —
+   * the prose writer works only from the raw affect readout, approval,
+   * investment, goals, persona, and canon, with no pre-composed intention
+   * paragraph steering it. This parameter defaults true when omitted; the
+   * panel-facing default lives in backend.ts's Config and currently ships off.
+   */
+  demeanorEnabled?: boolean
 }
 
 /**
@@ -514,7 +525,8 @@ export function buildDirective(run: RunState, opts: DirectiveOpts = {}): string 
 
   const humanTexture = opts.humanTexture !== false
   const conflictCheck = opts.conflictCheck !== false
-  const blocks = present.map((c) => characterBlock(c, humanTexture, conflictCheck)).join('\n\n')
+  const demeanorEnabled = opts.demeanorEnabled !== false
+  const blocks = present.map((c) => characterBlock(c, humanTexture, conflictCheck, demeanorEnabled)).join('\n\n')
   return [
     '[Psyche — character, agency & state]',
     'AGENCY: each character below is an INDEPENDENT person with their own goals — not',
@@ -577,7 +589,7 @@ export function buildDirective(run: RunState, opts: DirectiveOpts = {}): string 
           '    refusal. It moves slowly; act the current level, don\'t leap ahead of it.',
         ]),
     '',
-    ...(conflictCheck
+    ...(conflictCheck && demeanorEnabled
       ? [
           'Each character below may carry a "Holding the line" note — what they are NOT',
           'giving away this turn (warmth, agreement, ground in the scene) and why. Honor it',

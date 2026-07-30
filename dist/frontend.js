@@ -132,6 +132,7 @@ function setup(ctx) {
         <label class="ps-row"><input type="checkbox" class="ps-en" /> Enabled</label>
         <label class="ps-row"><input type="checkbox" class="ps-texture" /> Human texture (energy-matched replies — flat moods read flat)</label>
         <label class="ps-row"><input type="checkbox" class="ps-conflict" /> Per-turn conflict check (forces a "Holding the line" resistance field + friction/warmth rules — off lets the model judge tone and compliance on its own)</label>
+        <label class="ps-row"><input type="checkbox" class="ps-dem-en" /> Inject demeanor &amp; "Holding the line" (the uneditable fields shown above Goals &amp; Desires) — off gives the writer no pre-computed intention paragraph, just raw state, goals, persona, and canon</label>
         <div><span class="ps-muted">Engine rounds per turn</span><input type="number" class="ps-input ps-rounds" min="1" max="20" /></div>
         <div><span class="ps-muted">Decay rate (0–1, relax toward baseline)</span><input type="number" class="ps-input ps-decay" min="0" max="1" step="0.01" /></div>
         <div><span class="ps-muted">Engine directive (optional)</span><textarea class="ps-ta ps-dir" placeholder="e.g. Slow-burn; keep characters guarded until trust is earned."></textarea></div>
@@ -179,6 +180,7 @@ function setup(ctx) {
   const enEl = q(".ps-en");
   const textureEl = q(".ps-texture");
   const conflictEl = q(".ps-conflict");
+  const demEnEl = q(".ps-dem-en");
   const roundsEl = q(".ps-rounds");
   const decayEl = q(".ps-decay");
   const dirEl = q(".ps-dir");
@@ -490,7 +492,8 @@ ${t.response}`;
         directive: dirEl.value,
         agentConnectionId: connEl.value,
         humanTexture: textureEl.checked,
-        conflictCheck: conflictEl.checked
+        conflictCheck: conflictEl.checked,
+        demeanorEnabled: demEnEl.checked
       }
     });
   });
@@ -546,6 +549,7 @@ ${t.response}`;
         enEl.checked = c.enabled !== false;
         textureEl.checked = c.humanTexture !== false;
         conflictEl.checked = c.conflictCheck === true;
+        demEnEl.checked = c.demeanorEnabled === true;
         roundsEl.value = String(c.maxRounds ?? 8);
         decayEl.value = String(c.decayRate ?? 0.12);
         dirEl.value = c.directive ?? "";

@@ -53,6 +53,15 @@ interface Config {
    * model judge tone/compliance on its own from context instead of a forced field.
    */
   conflictCheck: boolean
+  /**
+   * Injects the uneditable, LLM-computed demeanor ("how this character is
+   * acting right now") and, when conflictCheck is also on, the "Holding the
+   * line" resistance note — the fields shown above Goals & Desires in the
+   * panel that aren't editable there. Off: the prose writer gets no pre-
+   * composed behavioral-intention paragraph and works purely from the raw
+   * affect readout, approval, investment, goals, persona, and canon.
+   */
+  demeanorEnabled: boolean
   /** the editing pass: rewrite each reply per editorPrompt before the player reads it */
   editorEnabled: boolean
   /** user-editable style directives for the editor ('' falls back to the default) */
@@ -72,6 +81,7 @@ const DEFAULT_CONFIG: Config = {
   agentConnectionId: '',
   humanTexture: true,
   conflictCheck: false,
+  demeanorEnabled: false,
   editorEnabled: false,
   editorPrompt: DEFAULT_EDITOR_PROMPT,
   editorConnectionId: '',
@@ -363,6 +373,7 @@ async function runAgentForChat(chatId: string, reply: string, userId?: string) {
           playerProfile,
           humanTexture: config.humanTexture,
           conflictCheck: config.conflictCheck,
+          demeanorEnabled: config.demeanorEnabled,
         }) ?? '(nothing injected — not seeded or no one present)',
         DBG_REQ_CAP,
       ),
@@ -625,6 +636,7 @@ async function refreshInjection(chatId: string, userId?: string) {
           playerProfile,
           humanTexture: config.humanTexture,
           conflictCheck: config.conflictCheck,
+          demeanorEnabled: config.demeanorEnabled,
         })) ||
       '(no active emotional state)'
     await spindle.world_books.entries.update(entryId, { content: directive }, userId)
@@ -750,6 +762,7 @@ spindle.onFrontendMessage(async (payload: any, userId) => {
             : String(payload.config.agentConnectionId ?? ''),
         humanTexture: Boolean(payload.config?.humanTexture ?? config.humanTexture),
         conflictCheck: Boolean(payload.config?.conflictCheck ?? config.conflictCheck),
+        demeanorEnabled: Boolean(payload.config?.demeanorEnabled ?? config.demeanorEnabled),
         editorEnabled: Boolean(payload.config?.editorEnabled ?? config.editorEnabled),
         editorPrompt:
           payload.config?.editorPrompt === undefined
