@@ -480,7 +480,7 @@ export async function runPsycheAgent(
  * directive the prose writer follows. The prose engine is the final stage.
  */
 
-function ruminateSystemPrompt(): string {
+function ruminateSystemPrompt(conflictCheck: boolean): string {
   return [
     AGENT_SENTINEL,
     'You are Psyche\'s DELIBERATION stage. You run after the mind has been updated and',
@@ -517,49 +517,65 @@ function ruminateSystemPrompt(): string {
     'moment\'s mood: a devoted character stays loyal through a bad evening, and a',
     'hostile one is not won over by one nice gesture.',
     '',
-    'MANDATORY CONFLICT CHECK — do this before writing anything else, and calibrate',
-    'it by the character\'s CURRENT APPROVAL, not a flat rule. Ask: is the player,',
-    'this turn, asking for or steering the scene toward something that cuts against',
-    'this character\'s genuine wishes — their goals, persona, or canon? Or asking for',
-    'warmth, agreement, trust, or control of the scene that their approval has NOT',
-    'actually earned yet?',
-    '  • At neutral-to-low approval, bias toward finding real friction: compliance',
-    '    and warmth handed over for free, because it\'s convenient for the scene, is',
-    '    the exact failure this check exists to catch. A character at this level',
-    '    does not warm up, agree, or let the player\'s lead carry the scene just',
-    '    because the moment is pleasant — that has to be earned. When the player',
-    '    steers toward an outcome that doesn\'t serve the character\'s own agenda,',
-    '    they pull back toward what THEY want, even into a standoff.',
-    '  • At high approval (devoted or above), the bias FLIPS: compliance and warmth',
-    '    ARE earned, by definition of the level, on anything ordinary. Do not',
-    '    manufacture reluctance a high-approval character has no real reason to',
-    '    feel — that is its own failure mode, just as bad as free compliance at low',
-    '    approval. Reserve genuine resistance, even here, for requests that cut',
-    '    against their core goals, canon, or values — not everyday asks.',
-    '  • This is a real signal that should visibly change the character\'s behavior',
-    '    across the approval range, not a box to check the same way every time.',
-    '',
+    ...(conflictCheck
+      ? [
+          'MANDATORY CONFLICT CHECK — do this before writing anything else, and',
+          'calibrate it by the character\'s CURRENT APPROVAL, not a flat rule. Ask: is',
+          'the player, this turn, asking for or steering the scene toward something',
+          'that cuts against this character\'s genuine wishes — their goals, persona,',
+          'or canon? Or asking for warmth, agreement, trust, or control of the scene',
+          'that their approval has NOT actually earned yet?',
+          '  • At neutral-to-low approval, bias toward finding real friction: compliance',
+          '    and warmth handed over for free, because it\'s convenient for the scene, is',
+          '    the exact failure this check exists to catch. A character at this level',
+          '    does not warm up, agree, or let the player\'s lead carry the scene just',
+          '    because the moment is pleasant — that has to be earned. When the player',
+          '    steers toward an outcome that doesn\'t serve the character\'s own agenda,',
+          '    they pull back toward what THEY want, even into a standoff.',
+          '  • At high approval (devoted or above), the bias FLIPS: compliance and warmth',
+          '    ARE earned, by definition of the level, on anything ordinary. Do not',
+          '    manufacture reluctance a high-approval character has no real reason to',
+          '    feel — that is its own failure mode, just as bad as free compliance at low',
+          '    approval. Reserve genuine resistance, even here, for requests that cut',
+          '    against their core goals, canon, or values — not everyday asks.',
+          '  • This is a real signal that should visibly change the character\'s behavior',
+          '    across the approval range, not a box to check the same way every time.',
+          '',
+        ]
+      : []),
     'When a PLAYER PROFILE is provided, you also know what the PLAYER is here for.',
     'Bias each character\'s underlying pull toward their own goals ALONG a line the',
     'player\'s interests would enjoy when the two can genuinely align — but do not',
     'force it, and never have a character abandon their own agenda or nature to',
     'service the profile, or acknowledge it in-fiction.',
     '',
-    'Output TWO fields per character:',
-    '  resistance — 1-2 sentences, the direct output of the conflict check: what this',
-    '    character is NOT giving away this turn — warmth, agreement, ground in the',
-    '    scene, compliance — and why, tied to their goals/canon/approval. At low',
-    '    approval this should be common; at high approval it should be RARE, and when',
-    '    the check finds genuine alignment AND earned approval, say so plainly and',
-    '    say why it\'s earned, e.g. "aligned — this actually serves what they want, and',
-    '    the trust is there." Match the rate of resistance to the approval level —',
-    '    don\'t manufacture it out of habit. Never leave this field blank or generic.',
-    '  directive — 3-5 sentences of concrete behavioral direction for the prose writer,',
-    '    consistent with the resistance above: manner, tone, what they lean toward or',
-    '    away from, what they resist or withhold, how the feelings reshape their voice',
-    '    away from baseline. Include the ENERGY of their delivery: how much they say,',
-    '    how much effort it carries, whether they engage or withdraw. Write actions and',
-    '    bearing, not feelings; no emotion labels, no numbers.',
+    ...(conflictCheck
+      ? [
+          'Output TWO fields per character:',
+          '  resistance — 1-2 sentences, the direct output of the conflict check: what this',
+          '    character is NOT giving away this turn — warmth, agreement, ground in the',
+          '    scene, compliance — and why, tied to their goals/canon/approval. At low',
+          '    approval this should be common; at high approval it should be RARE, and when',
+          '    the check finds genuine alignment AND earned approval, say so plainly and',
+          '    say why it\'s earned, e.g. "aligned — this actually serves what they want, and',
+          '    the trust is there." Match the rate of resistance to the approval level —',
+          '    don\'t manufacture it out of habit. Never leave this field blank or generic.',
+          '  directive — 3-5 sentences of concrete behavioral direction for the prose writer,',
+          '    consistent with the resistance above: manner, tone, what they lean toward or',
+          '    away from, what they resist or withhold, how the feelings reshape their voice',
+          '    away from baseline. Include the ENERGY of their delivery: how much they say,',
+          '    how much effort it carries, whether they engage or withdraw. Write actions and',
+          '    bearing, not feelings; no emotion labels, no numbers.',
+        ]
+      : [
+          'Output ONE field per character:',
+          '  directive — 3-5 sentences of concrete behavioral direction for the prose writer:',
+          '    manner, tone, what they lean toward or away from, what they resist or withhold,',
+          '    how the feelings reshape their voice away from baseline, weighed against their',
+          '    goals and current approval. Include the ENERGY of their delivery: how much they',
+          '    say, how much effort it carries, whether they engage or withdraw. Write actions',
+          '    and bearing, not feelings; no emotion labels, no numbers.',
+        ]),
     '  Deliberately do NOT hand the writer a specific planned action, plot beat, or line',
     '  of dialogue to execute — that pre-scripts the scene and flattens what should stay',
     '  improvised. Describe the character\'s state, pull, and boundary; let the writer',
@@ -570,7 +586,9 @@ function ruminateSystemPrompt(): string {
     'persona or composure. Canon facts stay fixed truth. Do not write dialogue or narrate',
     'events that have not happened yet.',
     '',
-    'Return ONLY JSON: { "<id>": { "resistance": "<...>", "directive": "<...>" }, ... }',
+    conflictCheck
+      ? 'Return ONLY JSON: { "<id>": { "resistance": "<...>", "directive": "<...>" }, ... }'
+      : 'Return ONLY JSON: { "<id>": { "directive": "<...>" }, ... }',
   ].join('\n')
 }
 
@@ -581,12 +599,15 @@ function ruminateSystemPrompt(): string {
  * pull only — deliberately no pre-planned action or line, so the prose writer
  * still has room to improvise rather than execute a scripted beat.
  *
- * Also runs a MANDATORY conflict check each turn (-> resistance): forces the
- * model to name what the character is NOT giving away this turn — warmth,
- * agreement, ground in the scene — rather than trusting it to remember generic
- * "don't be a yes-man" guidance under context pressure. This is a boundary, not
- * a script: it says what the character withholds, never the specific line or
- * action they use to withhold it, so the prose still has to find its own way.
+ * When opts.conflictCheck is on, also runs a MANDATORY conflict check each turn
+ * (-> resistance): forces the model to name what the character is NOT giving
+ * away this turn — warmth, agreement, ground in the scene — rather than
+ * trusting it to remember generic "don't be a yes-man" guidance under context
+ * pressure. This is a boundary, not a script: it says what the character
+ * withholds, never the specific line or action they use to withhold it, so the
+ * prose still has to find its own way. When off, the model judges tone and
+ * compliance on its own from context (approval, goals, canon) each turn,
+ * without a forced field — softer, and free to misjudge either direction.
  */
 export async function ruminate(
   run: RunState,
@@ -598,8 +619,11 @@ export async function ruminate(
     onTrace?: TraceFn
     /** the human's per-character profile — steering context for how goals get weighed */
     playerProfile?: string
+    /** force a per-turn resistance/"holding the line" field instead of trusting the model's own judgment; default true */
+    conflictCheck?: boolean
   },
 ): Promise<void> {
+  const conflictCheck = opts.conflictCheck !== false
   const present = Object.values(run.characters).filter((c) => c.present)
   if (!present.length) return
 
@@ -620,7 +644,7 @@ export async function ruminate(
     .join('\n\n')
 
   const messages: LlmMessage[] = [
-    { role: 'system', content: ruminateSystemPrompt() },
+    { role: 'system', content: ruminateSystemPrompt(conflictCheck) },
     {
       role: 'user',
       content: [
@@ -637,8 +661,9 @@ export async function ruminate(
         'Characters (persona, canon, goals, current emotional state):',
         blocks,
         '',
-        'Ruminate — run the conflict check first — then write each one\'s resistance +',
-        'directive. Return only the JSON.',
+        conflictCheck
+          ? 'Ruminate — run the conflict check first — then write each one\'s resistance +\ndirective. Return only the JSON.'
+          : 'Ruminate, then write each one\'s directive. Return only the JSON.',
       ]
         .filter(Boolean)
         .join('\n'),

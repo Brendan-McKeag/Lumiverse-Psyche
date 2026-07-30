@@ -438,7 +438,7 @@ export function overrideDirective(c: CharacterState): string {
   return lines.join('\n')
 }
 
-function characterBlock(c: CharacterState, humanTexture = true): string {
+function characterBlock(c: CharacterState, humanTexture = true, conflictCheck = true): string {
   const lines: string[] = []
   lines.push(`## ${c.name}${c.isPrimary ? '' : ' (supporting character)'}`)
 
@@ -455,7 +455,7 @@ function characterBlock(c: CharacterState, humanTexture = true): string {
   const strongOverride = topOverrideTier(c) === 'overwhelming' || topOverrideTier(c) === 'all-consuming'
   if (!strongOverride) {
     if (c.demeanor && c.demeanor.trim()) lines.push(c.demeanor.trim())
-    if (c.resistance && c.resistance.trim()) lines.push(`Holding the line: ${c.resistance.trim()}`)
+    if (conflictCheck && c.resistance && c.resistance.trim()) lines.push(`Holding the line: ${c.resistance.trim()}`)
   }
 
   lines.push('')
@@ -490,6 +490,16 @@ export interface DirectiveOpts {
   playerProfile?: string
   /** energy-matched delivery lines + ENERGY preamble; defaults on */
   humanTexture?: boolean
+  /**
+   * The mandatory per-turn conflict check ("Holding the line" resistance field +
+   * the friction/warmth preamble rules that scale with approval). When off, the
+   * model judges tone and compliance on its own from context each turn — softer,
+   * cheaper to reason about, and free to misjudge in either direction; some
+   * players found the forced check overriding organic characterization. This
+   * parameter defaults true when omitted; the panel-facing default lives in
+   * backend.ts's Config and currently ships off.
+   */
+  conflictCheck?: boolean
 }
 
 /**
@@ -503,7 +513,8 @@ export function buildDirective(run: RunState, opts: DirectiveOpts = {}): string 
   present.sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary)) // primary first
 
   const humanTexture = opts.humanTexture !== false
-  const blocks = present.map((c) => characterBlock(c, humanTexture)).join('\n\n')
+  const conflictCheck = opts.conflictCheck !== false
+  const blocks = present.map((c) => characterBlock(c, humanTexture, conflictCheck)).join('\n\n')
   return [
     '[Psyche — character, agency & state]',
     'AGENCY: each character below is an INDEPENDENT person with their own goals — not',
@@ -511,16 +522,20 @@ export function buildDirective(run: RunState, opts: DirectiveOpts = {}): string 
     'take initiative, start things, change the subject, make demands, set conditions,',
     'and push back, stall, or refuse when the player\'s lead cuts against their aims.',
     'They move the scene as much as the player does, toward their own desires.',
-    '  • DEFAULT TO FRICTION, NOT COMPLIANCE — SCALED BY APPROVAL below, not a flat',
-    '    rule. At neutral-to-low approval, don\'t assume the character follows the',
-    '    player\'s lead just because it keeps the scene moving; check whether it',
-    '    serves THEIR agenda, and if it doesn\'t, they pull back toward what they',
-    '    actually want, even into a standoff. This default RELAXES as approval',
-    '    climbs: a devoted-or-higher character has already earned broad benefit of',
-    '    the doubt on ordinary asks and should follow their lead readily — save real',
-    '    pushback for things that cut against their core goals, canon, or values,',
-    '    not everyday requests. A story where the character\'s own agenda never wins',
-    '    at ANY approval level is a yes-man story wearing a character sheet.',
+    ...(conflictCheck
+      ? [
+          '  • DEFAULT TO FRICTION, NOT COMPLIANCE — SCALED BY APPROVAL below, not a flat',
+          '    rule. At neutral-to-low approval, don\'t assume the character follows the',
+          '    player\'s lead just because it keeps the scene moving; check whether it',
+          '    serves THEIR agenda, and if it doesn\'t, they pull back toward what they',
+          '    actually want, even into a standoff. This default RELAXES as approval',
+          '    climbs: a devoted-or-higher character has already earned broad benefit of',
+          '    the doubt on ordinary asks and should follow their lead readily — save real',
+          '    pushback for things that cut against their core goals, canon, or values,',
+          '    not everyday requests. A story where the character\'s own agenda never wins',
+          '    at ANY approval level is a yes-man story wearing a character sheet.',
+        ]
+      : []),
     '',
     'INVESTMENT: these characters are partners in the story, not service providers.',
     '  • When the player\'s actions serve a character\'s goals and desires, it LANDS:',
@@ -530,30 +545,47 @@ export function buildDirective(run: RunState, opts: DirectiveOpts = {}): string 
     '  • Enjoyment is earned, never faked. A character whose goals are ignored or',
     '    thwarted doesn\'t perform enthusiasm — they push their own agenda harder,',
     '    negotiate, or disengage.',
-    '  • WARMTH IS NOT FREE — SCALED BY APPROVAL below, not a flat rule. At',
-    '    neutral-to-low approval, a character does not grow fonder, more agreeable,',
-    '    or more open just because the scene is pleasant or the player is being nice;',
-    '    that has to be earned. But once approval is genuinely high, the warmth HAS',
-    '    been earned — a devoted-or-higher character shows it openly and often, not',
-    '    by re-litigating trust that is already won. Withholding warmth a maxed-out',
-    '    character has clearly earned is exactly as wrong as handing warmth out free.',
+    ...(conflictCheck
+      ? [
+          '  • WARMTH IS NOT FREE — SCALED BY APPROVAL below, not a flat rule. At',
+          '    neutral-to-low approval, a character does not grow fonder, more agreeable,',
+          '    or more open just because the scene is pleasant or the player is being nice;',
+          '    that has to be earned. But once approval is genuinely high, the warmth HAS',
+          '    been earned — a devoted-or-higher character shows it openly and often, not',
+          '    by re-litigating trust that is already won. Withholding warmth a maxed-out',
+          '    character has clearly earned is exactly as wrong as handing warmth out free.',
+        ]
+      : []),
     '  • DRIVE THE STORY: each character regularly contributes new material of their',
     '    own — a plan, an invitation, a complication, a confession, a callback to',
     '    earlier events — drawn from their goals and canon. They don\'t wait to be',
     '    prompted; the scene is theirs to move as much as the player\'s.',
-    '  • APPROVAL is each character\'s accumulated opinion of the player, and it SETS',
-    '    the two defaults above — it is not flavor text next to them. High approval',
-    '    buys real trust and willingness: they go along even when it cuts against',
-    '    their own wishes, and show warmth without being begged for it. Low approval',
-    '    means guardedness, pushback, refusal. Read the band\'s meaning below',
-    '    literally and act on it — it moves slowly, so don\'t leap ahead of it, but',
-    '    don\'t undersell it once it\'s been earned either.',
+    ...(conflictCheck
+      ? [
+          '  • APPROVAL is each character\'s accumulated opinion of the player, and it SETS',
+          '    the two defaults above — it is not flavor text next to them. High approval',
+          '    buys real trust and willingness: they go along even when it cuts against',
+          '    their own wishes, and show warmth without being begged for it. Low approval',
+          '    means guardedness, pushback, refusal. Read the band\'s meaning below',
+          '    literally and act on it — it moves slowly, so don\'t leap ahead of it, but',
+          '    don\'t undersell it once it\'s been earned either.',
+        ]
+      : [
+          '  • APPROVAL is each character\'s accumulated opinion of the player. High',
+          '    approval buys trust and willingness — they\'ll go along even when it cuts',
+          '    against their own wishes. Low approval means guardedness, pushback,',
+          '    refusal. It moves slowly; act the current level, don\'t leap ahead of it.',
+        ]),
     '',
-    'Each character below may carry a "Holding the line" note — what they are NOT',
-    'giving away this turn (warmth, agreement, ground in the scene) and why. Honor it',
-    'as a boundary: it says what they withhold, not how the scene plays out — find',
-    'your own way to make it true on the page.',
-    '',
+    ...(conflictCheck
+      ? [
+          'Each character below may carry a "Holding the line" note — what they are NOT',
+          'giving away this turn (warmth, agreement, ground in the scene) and why. Honor it',
+          'as a boundary: it says what they withhold, not how the scene plays out — find',
+          'your own way to make it true on the page.',
+          '',
+        ]
+      : []),
     'EMBODIMENT: act their state through behavior — posture, tone, word choice, what',
     'they reach for and hold back; let stronger feelings break composure and',
     'conflicting pulls show as push-and-pull. Treat their established canon as fixed',

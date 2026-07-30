@@ -47,6 +47,12 @@ interface Config {
   agentConnectionId: string
   /** gate for the energy-matched delivery lines + ENERGY preamble (human texture) */
   humanTexture: boolean
+  /**
+   * The mandatory per-turn conflict check: forces a "Holding the line" resistance
+   * field out of rumination plus the friction/warmth preamble rules. Off lets the
+   * model judge tone/compliance on its own from context instead of a forced field.
+   */
+  conflictCheck: boolean
   /** the editing pass: rewrite each reply per editorPrompt before the player reads it */
   editorEnabled: boolean
   /** user-editable style directives for the editor ('' falls back to the default) */
@@ -65,6 +71,7 @@ const DEFAULT_CONFIG: Config = {
   agentTimeoutMs: 90000,
   agentConnectionId: '',
   humanTexture: true,
+  conflictCheck: false,
   editorEnabled: false,
   editorPrompt: DEFAULT_EDITOR_PROMPT,
   editorConnectionId: '',
@@ -338,6 +345,7 @@ async function runAgentForChat(chatId: string, reply: string, userId?: string) {
         connectionId: agentConn,
         onTrace: (t) => (dbg.rumination = capTrace(t)),
         playerProfile,
+        conflictCheck: config.conflictCheck,
       })
     } catch (err) {
       spindle.log.error(`[psyche] rumination failed: ${String(err)}`)
@@ -351,8 +359,11 @@ async function runAgentForChat(chatId: string, reply: string, userId?: string) {
     dbg.injection = {
       at: Date.now(),
       directive: capText(
-        buildDirective(run, { playerProfile, humanTexture: config.humanTexture }) ??
-          '(nothing injected — not seeded or no one present)',
+        buildDirective(run, {
+          playerProfile,
+          humanTexture: config.humanTexture,
+          conflictCheck: config.conflictCheck,
+        }) ?? '(nothing injected — not seeded or no one present)',
         DBG_REQ_CAP,
       ),
     }
@@ -609,7 +620,12 @@ async function refreshInjection(chatId: string, userId?: string) {
     const run = await loadRun(chatId).catch(() => null)
     const playerProfile = await loadPlayerProfile(char.id).catch(() => '')
     const directive =
-      (run && buildDirective(run, { playerProfile, humanTexture: config.humanTexture })) ||
+      (run &&
+        buildDirective(run, {
+          playerProfile,
+          humanTexture: config.humanTexture,
+          conflictCheck: config.conflictCheck,
+        })) ||
       '(no active emotional state)'
     await spindle.world_books.entries.update(entryId, { content: directive }, userId)
     if (!loggedInject) {
@@ -733,6 +749,7 @@ spindle.onFrontendMessage(async (payload: any, userId) => {
             ? config.agentConnectionId
             : String(payload.config.agentConnectionId ?? ''),
         humanTexture: Boolean(payload.config?.humanTexture ?? config.humanTexture),
+        conflictCheck: Boolean(payload.config?.conflictCheck ?? config.conflictCheck),
         editorEnabled: Boolean(payload.config?.editorEnabled ?? config.editorEnabled),
         editorPrompt:
           payload.config?.editorPrompt === undefined

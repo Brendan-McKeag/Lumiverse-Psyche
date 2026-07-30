@@ -435,7 +435,7 @@ function overrideDirective(c) {
   return lines.join(`
 `);
 }
-function characterBlock(c, humanTexture = true) {
+function characterBlock(c, humanTexture = true, conflictCheck = true) {
   const lines = [];
   lines.push(`## ${c.name}${c.isPrimary ? "" : " (supporting character)"}`);
   const override = overrideDirective(c);
@@ -445,7 +445,7 @@ function characterBlock(c, humanTexture = true) {
   if (!strongOverride) {
     if (c.demeanor && c.demeanor.trim())
       lines.push(c.demeanor.trim());
-    if (c.resistance && c.resistance.trim())
+    if (conflictCheck && c.resistance && c.resistance.trim())
       lines.push(`Holding the line: ${c.resistance.trim()}`);
   }
   lines.push("");
@@ -480,7 +480,8 @@ function buildDirective(run, opts = {}) {
     return null;
   present.sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary));
   const humanTexture = opts.humanTexture !== false;
-  const blocks = present.map((c) => characterBlock(c, humanTexture)).join(`
+  const conflictCheck = opts.conflictCheck !== false;
+  const blocks = present.map((c) => characterBlock(c, humanTexture, conflictCheck)).join(`
 
 `);
   return [
@@ -490,16 +491,18 @@ function buildDirective(run, opts = {}) {
     "take initiative, start things, change the subject, make demands, set conditions,",
     "and push back, stall, or refuse when the player's lead cuts against their aims.",
     "They move the scene as much as the player does, toward their own desires.",
-    "  \u2022 DEFAULT TO FRICTION, NOT COMPLIANCE \u2014 SCALED BY APPROVAL below, not a flat",
-    "    rule. At neutral-to-low approval, don't assume the character follows the",
-    "    player's lead just because it keeps the scene moving; check whether it",
-    "    serves THEIR agenda, and if it doesn't, they pull back toward what they",
-    "    actually want, even into a standoff. This default RELAXES as approval",
-    "    climbs: a devoted-or-higher character has already earned broad benefit of",
-    "    the doubt on ordinary asks and should follow their lead readily \u2014 save real",
-    "    pushback for things that cut against their core goals, canon, or values,",
-    "    not everyday requests. A story where the character's own agenda never wins",
-    "    at ANY approval level is a yes-man story wearing a character sheet.",
+    ...conflictCheck ? [
+      "  \u2022 DEFAULT TO FRICTION, NOT COMPLIANCE \u2014 SCALED BY APPROVAL below, not a flat",
+      "    rule. At neutral-to-low approval, don't assume the character follows the",
+      "    player's lead just because it keeps the scene moving; check whether it",
+      "    serves THEIR agenda, and if it doesn't, they pull back toward what they",
+      "    actually want, even into a standoff. This default RELAXES as approval",
+      "    climbs: a devoted-or-higher character has already earned broad benefit of",
+      "    the doubt on ordinary asks and should follow their lead readily \u2014 save real",
+      "    pushback for things that cut against their core goals, canon, or values,",
+      "    not everyday requests. A story where the character's own agenda never wins",
+      "    at ANY approval level is a yes-man story wearing a character sheet."
+    ] : [],
     "",
     "INVESTMENT: these characters are partners in the story, not service providers.",
     "  \u2022 When the player's actions serve a character's goals and desires, it LANDS:",
@@ -509,30 +512,41 @@ function buildDirective(run, opts = {}) {
     "  \u2022 Enjoyment is earned, never faked. A character whose goals are ignored or",
     "    thwarted doesn't perform enthusiasm \u2014 they push their own agenda harder,",
     "    negotiate, or disengage.",
-    "  \u2022 WARMTH IS NOT FREE \u2014 SCALED BY APPROVAL below, not a flat rule. At",
-    "    neutral-to-low approval, a character does not grow fonder, more agreeable,",
-    "    or more open just because the scene is pleasant or the player is being nice;",
-    "    that has to be earned. But once approval is genuinely high, the warmth HAS",
-    "    been earned \u2014 a devoted-or-higher character shows it openly and often, not",
-    "    by re-litigating trust that is already won. Withholding warmth a maxed-out",
-    "    character has clearly earned is exactly as wrong as handing warmth out free.",
+    ...conflictCheck ? [
+      "  \u2022 WARMTH IS NOT FREE \u2014 SCALED BY APPROVAL below, not a flat rule. At",
+      "    neutral-to-low approval, a character does not grow fonder, more agreeable,",
+      "    or more open just because the scene is pleasant or the player is being nice;",
+      "    that has to be earned. But once approval is genuinely high, the warmth HAS",
+      "    been earned \u2014 a devoted-or-higher character shows it openly and often, not",
+      "    by re-litigating trust that is already won. Withholding warmth a maxed-out",
+      "    character has clearly earned is exactly as wrong as handing warmth out free."
+    ] : [],
     "  \u2022 DRIVE THE STORY: each character regularly contributes new material of their",
     "    own \u2014 a plan, an invitation, a complication, a confession, a callback to",
     "    earlier events \u2014 drawn from their goals and canon. They don't wait to be",
     "    prompted; the scene is theirs to move as much as the player's.",
-    "  \u2022 APPROVAL is each character's accumulated opinion of the player, and it SETS",
-    "    the two defaults above \u2014 it is not flavor text next to them. High approval",
-    "    buys real trust and willingness: they go along even when it cuts against",
-    "    their own wishes, and show warmth without being begged for it. Low approval",
-    "    means guardedness, pushback, refusal. Read the band's meaning below",
-    "    literally and act on it \u2014 it moves slowly, so don't leap ahead of it, but",
-    "    don't undersell it once it's been earned either.",
+    ...conflictCheck ? [
+      "  \u2022 APPROVAL is each character's accumulated opinion of the player, and it SETS",
+      "    the two defaults above \u2014 it is not flavor text next to them. High approval",
+      "    buys real trust and willingness: they go along even when it cuts against",
+      "    their own wishes, and show warmth without being begged for it. Low approval",
+      "    means guardedness, pushback, refusal. Read the band's meaning below",
+      "    literally and act on it \u2014 it moves slowly, so don't leap ahead of it, but",
+      "    don't undersell it once it's been earned either."
+    ] : [
+      "  \u2022 APPROVAL is each character's accumulated opinion of the player. High",
+      "    approval buys trust and willingness \u2014 they'll go along even when it cuts",
+      "    against their own wishes. Low approval means guardedness, pushback,",
+      "    refusal. It moves slowly; act the current level, don't leap ahead of it."
+    ],
     "",
-    'Each character below may carry a "Holding the line" note \u2014 what they are NOT',
-    "giving away this turn (warmth, agreement, ground in the scene) and why. Honor it",
-    "as a boundary: it says what they withhold, not how the scene plays out \u2014 find",
-    "your own way to make it true on the page.",
-    "",
+    ...conflictCheck ? [
+      'Each character below may carry a "Holding the line" note \u2014 what they are NOT',
+      "giving away this turn (warmth, agreement, ground in the scene) and why. Honor it",
+      "as a boundary: it says what they withhold, not how the scene plays out \u2014 find",
+      "your own way to make it true on the page.",
+      ""
+    ] : [],
     "EMBODIMENT: act their state through behavior \u2014 posture, tone, word choice, what",
     "they reach for and hold back; let stronger feelings break composure and",
     "conflicting pulls show as push-and-pull. Treat their established canon as fixed",
@@ -1412,7 +1426,7 @@ tool calls (${toolCalls.length}):
   });
   return { rounds, toolCalls, finalNote };
 }
-function ruminateSystemPrompt() {
+function ruminateSystemPrompt(conflictCheck) {
   return [
     AGENT_SENTINEL,
     "You are Psyche's DELIBERATION stage. You run after the mind has been updated and",
@@ -1449,49 +1463,61 @@ function ruminateSystemPrompt() {
     "moment's mood: a devoted character stays loyal through a bad evening, and a",
     "hostile one is not won over by one nice gesture.",
     "",
-    "MANDATORY CONFLICT CHECK \u2014 do this before writing anything else, and calibrate",
-    "it by the character's CURRENT APPROVAL, not a flat rule. Ask: is the player,",
-    "this turn, asking for or steering the scene toward something that cuts against",
-    "this character's genuine wishes \u2014 their goals, persona, or canon? Or asking for",
-    "warmth, agreement, trust, or control of the scene that their approval has NOT",
-    "actually earned yet?",
-    "  \u2022 At neutral-to-low approval, bias toward finding real friction: compliance",
-    "    and warmth handed over for free, because it's convenient for the scene, is",
-    "    the exact failure this check exists to catch. A character at this level",
-    "    does not warm up, agree, or let the player's lead carry the scene just",
-    "    because the moment is pleasant \u2014 that has to be earned. When the player",
-    "    steers toward an outcome that doesn't serve the character's own agenda,",
-    "    they pull back toward what THEY want, even into a standoff.",
-    "  \u2022 At high approval (devoted or above), the bias FLIPS: compliance and warmth",
-    "    ARE earned, by definition of the level, on anything ordinary. Do not",
-    "    manufacture reluctance a high-approval character has no real reason to",
-    "    feel \u2014 that is its own failure mode, just as bad as free compliance at low",
-    "    approval. Reserve genuine resistance, even here, for requests that cut",
-    "    against their core goals, canon, or values \u2014 not everyday asks.",
-    "  \u2022 This is a real signal that should visibly change the character's behavior",
-    "    across the approval range, not a box to check the same way every time.",
-    "",
+    ...conflictCheck ? [
+      "MANDATORY CONFLICT CHECK \u2014 do this before writing anything else, and",
+      "calibrate it by the character's CURRENT APPROVAL, not a flat rule. Ask: is",
+      "the player, this turn, asking for or steering the scene toward something",
+      "that cuts against this character's genuine wishes \u2014 their goals, persona,",
+      "or canon? Or asking for warmth, agreement, trust, or control of the scene",
+      "that their approval has NOT actually earned yet?",
+      "  \u2022 At neutral-to-low approval, bias toward finding real friction: compliance",
+      "    and warmth handed over for free, because it's convenient for the scene, is",
+      "    the exact failure this check exists to catch. A character at this level",
+      "    does not warm up, agree, or let the player's lead carry the scene just",
+      "    because the moment is pleasant \u2014 that has to be earned. When the player",
+      "    steers toward an outcome that doesn't serve the character's own agenda,",
+      "    they pull back toward what THEY want, even into a standoff.",
+      "  \u2022 At high approval (devoted or above), the bias FLIPS: compliance and warmth",
+      "    ARE earned, by definition of the level, on anything ordinary. Do not",
+      "    manufacture reluctance a high-approval character has no real reason to",
+      "    feel \u2014 that is its own failure mode, just as bad as free compliance at low",
+      "    approval. Reserve genuine resistance, even here, for requests that cut",
+      "    against their core goals, canon, or values \u2014 not everyday asks.",
+      "  \u2022 This is a real signal that should visibly change the character's behavior",
+      "    across the approval range, not a box to check the same way every time.",
+      ""
+    ] : [],
     "When a PLAYER PROFILE is provided, you also know what the PLAYER is here for.",
     "Bias each character's underlying pull toward their own goals ALONG a line the",
     "player's interests would enjoy when the two can genuinely align \u2014 but do not",
     "force it, and never have a character abandon their own agenda or nature to",
     "service the profile, or acknowledge it in-fiction.",
     "",
-    "Output TWO fields per character:",
-    "  resistance \u2014 1-2 sentences, the direct output of the conflict check: what this",
-    "    character is NOT giving away this turn \u2014 warmth, agreement, ground in the",
-    "    scene, compliance \u2014 and why, tied to their goals/canon/approval. At low",
-    "    approval this should be common; at high approval it should be RARE, and when",
-    "    the check finds genuine alignment AND earned approval, say so plainly and",
-    `    say why it's earned, e.g. "aligned \u2014 this actually serves what they want, and`,
-    '    the trust is there." Match the rate of resistance to the approval level \u2014',
-    "    don't manufacture it out of habit. Never leave this field blank or generic.",
-    "  directive \u2014 3-5 sentences of concrete behavioral direction for the prose writer,",
-    "    consistent with the resistance above: manner, tone, what they lean toward or",
-    "    away from, what they resist or withhold, how the feelings reshape their voice",
-    "    away from baseline. Include the ENERGY of their delivery: how much they say,",
-    "    how much effort it carries, whether they engage or withdraw. Write actions and",
-    "    bearing, not feelings; no emotion labels, no numbers.",
+    ...conflictCheck ? [
+      "Output TWO fields per character:",
+      "  resistance \u2014 1-2 sentences, the direct output of the conflict check: what this",
+      "    character is NOT giving away this turn \u2014 warmth, agreement, ground in the",
+      "    scene, compliance \u2014 and why, tied to their goals/canon/approval. At low",
+      "    approval this should be common; at high approval it should be RARE, and when",
+      "    the check finds genuine alignment AND earned approval, say so plainly and",
+      `    say why it's earned, e.g. "aligned \u2014 this actually serves what they want, and`,
+      '    the trust is there." Match the rate of resistance to the approval level \u2014',
+      "    don't manufacture it out of habit. Never leave this field blank or generic.",
+      "  directive \u2014 3-5 sentences of concrete behavioral direction for the prose writer,",
+      "    consistent with the resistance above: manner, tone, what they lean toward or",
+      "    away from, what they resist or withhold, how the feelings reshape their voice",
+      "    away from baseline. Include the ENERGY of their delivery: how much they say,",
+      "    how much effort it carries, whether they engage or withdraw. Write actions and",
+      "    bearing, not feelings; no emotion labels, no numbers."
+    ] : [
+      "Output ONE field per character:",
+      "  directive \u2014 3-5 sentences of concrete behavioral direction for the prose writer:",
+      "    manner, tone, what they lean toward or away from, what they resist or withhold,",
+      "    how the feelings reshape their voice away from baseline, weighed against their",
+      "    goals and current approval. Include the ENERGY of their delivery: how much they",
+      "    say, how much effort it carries, whether they engage or withdraw. Write actions",
+      "    and bearing, not feelings; no emotion labels, no numbers."
+    ],
     "  Deliberately do NOT hand the writer a specific planned action, plot beat, or line",
     "  of dialogue to execute \u2014 that pre-scripts the scene and flattens what should stay",
     "  improvised. Describe the character's state, pull, and boundary; let the writer",
@@ -1502,11 +1528,12 @@ function ruminateSystemPrompt() {
     "persona or composure. Canon facts stay fixed truth. Do not write dialogue or narrate",
     "events that have not happened yet.",
     "",
-    'Return ONLY JSON: { "<id>": { "resistance": "<...>", "directive": "<...>" }, ... }'
+    conflictCheck ? 'Return ONLY JSON: { "<id>": { "resistance": "<...>", "directive": "<...>" }, ... }' : 'Return ONLY JSON: { "<id>": { "directive": "<...>" }, ... }'
   ].join(`
 `);
 }
 async function ruminate(run, recentScene, opts) {
+  const conflictCheck = opts.conflictCheck !== false;
   const present = Object.values(run.characters).filter((c) => c.present);
   if (!present.length)
     return;
@@ -1524,7 +1551,7 @@ ${(c.canon ?? "").trim()}` : "",
 
 `);
   const messages = [
-    { role: "system", content: ruminateSystemPrompt() },
+    { role: "system", content: ruminateSystemPrompt(conflictCheck) },
     {
       role: "user",
       content: [
@@ -1541,8 +1568,8 @@ ${(c.canon ?? "").trim()}` : "",
         "Characters (persona, canon, goals, current emotional state):",
         blocks,
         "",
-        "Ruminate \u2014 run the conflict check first \u2014 then write each one's resistance +",
-        "directive. Return only the JSON."
+        conflictCheck ? `Ruminate \u2014 run the conflict check first \u2014 then write each one's resistance +
+directive. Return only the JSON.` : "Ruminate, then write each one's directive. Return only the JSON."
       ].filter(Boolean).join(`
 `)
     }
@@ -1689,6 +1716,7 @@ var DEFAULT_CONFIG = {
   agentTimeoutMs: 90000,
   agentConnectionId: "",
   humanTexture: true,
+  conflictCheck: false,
   editorEnabled: false,
   editorPrompt: DEFAULT_EDITOR_PROMPT,
   editorConnectionId: "",
@@ -1915,7 +1943,8 @@ async function runAgentForChat(chatId, reply, userId) {
         userId,
         connectionId: agentConn,
         onTrace: (t) => dbg.rumination = capTrace(t),
-        playerProfile
+        playerProfile,
+        conflictCheck: config.conflictCheck
       });
     } catch (err) {
       spindle.log.error(`[psyche] rumination failed: ${String(err)}`);
@@ -1924,7 +1953,11 @@ async function runAgentForChat(chatId, reply, userId) {
     await refreshInjection(chatId, userId);
     dbg.injection = {
       at: Date.now(),
-      directive: capText(buildDirective(run, { playerProfile, humanTexture: config.humanTexture }) ?? "(nothing injected \u2014 not seeded or no one present)", DBG_REQ_CAP)
+      directive: capText(buildDirective(run, {
+        playerProfile,
+        humanTexture: config.humanTexture,
+        conflictCheck: config.conflictCheck
+      }) ?? "(nothing injected \u2014 not seeded or no one present)", DBG_REQ_CAP)
     };
     try {
       const prev = await loadDebug(chatId);
@@ -2111,7 +2144,11 @@ async function refreshInjection(chatId, userId) {
       return;
     const run = await loadRun(chatId).catch(() => null);
     const playerProfile = await loadPlayerProfile(char.id).catch(() => "");
-    const directive = run && buildDirective(run, { playerProfile, humanTexture: config.humanTexture }) || "(no active emotional state)";
+    const directive = run && buildDirective(run, {
+      playerProfile,
+      humanTexture: config.humanTexture,
+      conflictCheck: config.conflictCheck
+    }) || "(no active emotional state)";
     await spindle.world_books.entries.update(entryId, { content: directive }, userId);
     if (!loggedInject) {
       loggedInject = true;
@@ -2213,6 +2250,7 @@ spindle.onFrontendMessage(async (payload, userId) => {
           agentTimeoutMs: clampInt(payload.config?.agentTimeoutMs ?? config.agentTimeoutMs, 1e4, 300000),
           agentConnectionId: payload.config?.agentConnectionId === undefined ? config.agentConnectionId : String(payload.config.agentConnectionId ?? ""),
           humanTexture: Boolean(payload.config?.humanTexture ?? config.humanTexture),
+          conflictCheck: Boolean(payload.config?.conflictCheck ?? config.conflictCheck),
           editorEnabled: Boolean(payload.config?.editorEnabled ?? config.editorEnabled),
           editorPrompt: payload.config?.editorPrompt === undefined ? config.editorPrompt : String(payload.config.editorPrompt ?? ""),
           editorConnectionId: payload.config?.editorConnectionId === undefined ? config.editorConnectionId : String(payload.config.editorConnectionId ?? ""),
